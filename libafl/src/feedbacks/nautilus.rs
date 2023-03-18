@@ -14,9 +14,8 @@ use crate::{
     executors::ExitKind,
     feedbacks::Feedback,
     generators::NautilusContext,
-    inputs::NautilusInput,
+    inputs::{NautilusInput, UsesInput},
     observers::ObserversTuple,
-    prelude::UsesInput,
     state::{HasClientPerfMonitor, HasMetadata},
     Error,
 };
@@ -112,7 +111,7 @@ where
     {
         let input = testcase.load_input()?.clone();
         let meta = state
-            .metadata_mut()
+            .metadata_map_mut()
             .get_mut::<NautilusChunksMetadata>()
             .expect("NautilusChunksMetadata not in the state");
         meta.cks.add_tree(input.tree, self.ctx);

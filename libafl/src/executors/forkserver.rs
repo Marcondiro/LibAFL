@@ -24,13 +24,15 @@ use nix::{
     unistd::Pid,
 };
 
+#[cfg(feature = "regex")]
+use crate::observers::{get_asan_runtime_flags_with_log_path, AsanBacktraceObserver};
 use crate::{
     bolts::{
         fs::{get_unique_std_input_file, InputFile},
         os::{dup2, pipes::Pipe},
         shmem::{ShMem, ShMemProvider, UnixShMemProvider},
         tuples::Prepend,
-        AsMutSlice, AsSlice,
+        AsMutSlice, AsSlice, Truncate,
     },
     executors::{Executor, ExitKind, HasObservers},
     inputs::{HasTargetBytes, Input, UsesInput},
@@ -39,9 +41,6 @@ use crate::{
     state::UsesState,
     Error,
 };
-
-#[cfg(feature = "regex")]
-use crate::observers::{get_asan_runtime_flags_with_log_path, AsanBacktraceObserver};
 
 const FORKSRV_FD: i32 = 198;
 #[allow(clippy::cast_possible_wrap)]
@@ -654,7 +653,7 @@ impl<'a, SP> ForkserverExecutorBuilder<'a, SP> {
         other_observers: OT,
     ) -> Result<ForkserverExecutor<(MO, OT), S, SP>, Error>
     where
-        MO: Observer<S> + MapObserver, // TODO maybe enforce Entry = u8 for the cov map
+        MO: Observer<S> + MapObserver + Truncate, // TODO maybe enforce Entry = u8 for the cov map
         OT: ObserversTuple<S> + Prepend<MO, PreprendResult = OT>,
         S: UsesInput,
         S::Input: Input + HasTargetBytes,
@@ -672,7 +671,7 @@ impl<'a, SP> ForkserverExecutorBuilder<'a, SP> {
         );
 
         if let Some(dynamic_map_size) = self.map_size {
-            map_observer.downsize_map(dynamic_map_size);
+            map_observer.truncate(dynamic_map_size);
         }
 
         let observers: (MO, OT) = other_observers.prepend(map_observer);
@@ -1284,6 +1283,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg_attr(miri, ignore)]
     fn test_forkserver() {
         const MAP_SIZE: usize = 65536;
         let bin = OsString::from("echo");
