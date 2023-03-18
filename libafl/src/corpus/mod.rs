@@ -1,7 +1,7 @@
 //! Corpuses contain the testcases, either in memory, on disk, or somewhere else.
 
 pub mod testcase;
-pub use testcase::{SchedulerTestcaseMetaData, Testcase};
+pub use testcase::{SchedulerTestcaseMetadata, Testcase};
 
 pub mod inmemory;
 pub use inmemory::InMemoryCorpus;
@@ -51,6 +51,13 @@ impl From<usize> for CorpusId {
 impl From<u64> for CorpusId {
     fn from(id: u64) -> Self {
         Self(id as usize)
+    }
+}
+
+impl From<CorpusId> for usize {
+    /// Not that the `CorpusId` is not necessarily stable in the corpus (if we remove [`Testcase`]s, for example).
+    fn from(id: CorpusId) -> Self {
+        id.0
     }
 }
 

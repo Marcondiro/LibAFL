@@ -34,9 +34,7 @@ where
     /// Number of executions done at discovery time
     executions: usize,
     /// Number of fuzzing iterations of this particular input updated in perform_mutational
-    fuzz_level: usize,
-    /// If it has been fuzzed
-    fuzzed: bool,
+    scheduled_count: usize,
     /// Parent [`CorpusId`], if known
     parent_id: Option<CorpusId>,
 }
@@ -47,13 +45,13 @@ where
 {
     /// Get all the metadata into an [`hashbrown::HashMap`]
     #[inline]
-    fn metadata(&self) -> &SerdeAnyMap {
+    fn metadata_map(&self) -> &SerdeAnyMap {
         &self.metadata
     }
 
     /// Get all the metadata into an [`hashbrown::HashMap`] (mutable)
     #[inline]
-    fn metadata_mut(&mut self) -> &mut SerdeAnyMap {
+    fn metadata_map_mut(&mut self) -> &mut SerdeAnyMap {
         &mut self.metadata
     }
 }
@@ -160,28 +158,16 @@ where
         &mut self.executions
     }
 
-    /// Get the `fuzz_level`
+    /// Get the `scheduled_count`
     #[inline]
-    pub fn fuzz_level(&self) -> usize {
-        self.fuzz_level
+    pub fn scheduled_count(&self) -> usize {
+        self.scheduled_count
     }
 
-    /// Set the `fuzz_level`
+    /// Set the `scheduled_count`
     #[inline]
-    pub fn set_fuzz_level(&mut self, fuzz_level: usize) {
-        self.fuzz_level = fuzz_level;
-    }
-
-    /// Get if it was fuzzed
-    #[inline]
-    pub fn fuzzed(&self) -> bool {
-        self.fuzzed
-    }
-
-    /// Set if it was fuzzed
-    #[inline]
-    pub fn set_fuzzed(&mut self, fuzzed: bool) {
-        self.fuzzed = fuzzed;
+    pub fn set_scheduled_count(&mut self, scheduled_count: usize) {
+        self.scheduled_count = scheduled_count;
     }
 
     /// Create a new Testcase instance given an input
@@ -257,9 +243,8 @@ where
             metadata: SerdeAnyMap::new(),
             exec_time: None,
             cached_len: None,
-            fuzz_level: 0,
+            scheduled_count: 0,
             executions: 0,
-            fuzzed: false,
             parent_id: None,
         }
     }
@@ -304,7 +289,7 @@ where
 
 /// The Metadata for each testcase used in power schedules.
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct SchedulerTestcaseMetaData {
+pub struct SchedulerTestcaseMetadata {
     /// Number of bits set in bitmap, updated in calibrate_case
     bitmap_size: u64,
     /// Number of queue cycles behind
@@ -317,8 +302,8 @@ pub struct SchedulerTestcaseMetaData {
     cycle_and_time: (Duration, usize),
 }
 
-impl SchedulerTestcaseMetaData {
-    /// Create new [`struct@SchedulerTestcaseMetaData`]
+impl SchedulerTestcaseMetadata {
+    /// Create new [`struct@SchedulerTestcaseMetadata`]
     #[must_use]
     pub fn new(depth: u64) -> Self {
         Self {
@@ -330,7 +315,7 @@ impl SchedulerTestcaseMetaData {
         }
     }
 
-    /// Create new [`struct@SchedulerTestcaseMetaData`] given `n_fuzz_entry`
+    /// Create new [`struct@SchedulerTestcaseMetadata`] given `n_fuzz_entry`
     #[must_use]
     pub fn with_n_fuzz_entry(depth: u64, n_fuzz_entry: usize) -> Self {
         Self {
@@ -408,7 +393,7 @@ impl SchedulerTestcaseMetaData {
     }
 }
 
-crate::impl_serdeany!(SchedulerTestcaseMetaData);
+crate::impl_serdeany!(SchedulerTestcaseMetadata);
 
 #[cfg(feature = "python")]
 #[allow(missing_docs)]
@@ -486,17 +471,12 @@ pub mod pybind {
         }
 
         #[getter]
-        fn fuzz_level(&self) -> usize {
-            self.inner.as_ref().fuzz_level()
-        }
-
-        #[getter]
-        fn fuzzed(&self) -> bool {
-            self.inner.as_ref().fuzzed()
+        fn scheduled_count(&self) -> usize {
+            self.inner.as_ref().scheduled_count()
         }
 
         fn metadata(&mut self) -> PyObject {
-            let meta = self.inner.as_mut().metadata_mut();
+            let meta = self.inner.as_mut().metadata_map_mut();
             if !meta.contains::<PythonMetadata>() {
                 Python::with_gil(|py| {
                     let dict: Py<PyDict> = PyDict::new(py).into();

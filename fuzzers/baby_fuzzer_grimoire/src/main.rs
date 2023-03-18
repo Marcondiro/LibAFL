@@ -85,7 +85,7 @@ pub fn main() {
     let observer = unsafe { StdMapObserver::new("signals", &mut SIGNALS) };
 
     // Feedback to rate the interestingness of an input
-    let mut feedback = MaxMapFeedback::new_tracking(&observer, false, true);
+    let mut feedback = MaxMapFeedback::tracking(&observer, false, true);
 
     // A feedback to choose if an input is a solution or not
     let mut objective = CrashFeedback::new();
@@ -107,7 +107,7 @@ pub fn main() {
     )
     .unwrap();
 
-    if state.metadata().get::<Tokens>().is_none() {
+    if state.metadata_map().get::<Tokens>().is_none() {
         state.add_metadata(Tokens::from([b"FOO".to_vec(), b"BAR".to_vec()]));
     }
 

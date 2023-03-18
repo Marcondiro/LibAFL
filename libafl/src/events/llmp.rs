@@ -22,6 +22,8 @@ use super::{CustomBufEventResult, CustomBufHandlerFn};
 use crate::bolts::core_affinity::CoreId;
 #[cfg(all(feature = "std", any(windows, not(feature = "fork"))))]
 use crate::bolts::os::startable_self;
+#[cfg(all(unix, feature = "std", not(miri)))]
+use crate::bolts::os::unix_signals::setup_signal_handler;
 #[cfg(all(feature = "std", feature = "fork", unix))]
 use crate::bolts::os::{fork, ForkResult};
 #[cfg(feature = "llmp_compression")]
@@ -32,10 +34,7 @@ use crate::bolts::{
 #[cfg(feature = "std")]
 use crate::bolts::{llmp::LlmpConnection, shmem::StdShMemProvider, staterestore::StateRestorer};
 #[cfg(all(unix, feature = "std"))]
-use crate::{
-    bolts::os::unix_signals::setup_signal_handler,
-    events::{shutdown_handler, SHUTDOWN_SIGHANDLER_DATA},
-};
+use crate::events::{shutdown_handler, SHUTDOWN_SIGHANDLER_DATA};
 use crate::{
     bolts::{
         llmp::{self, LlmpClient, LlmpClientDescription, Tag},
@@ -104,7 +103,7 @@ where
     /// Create llmp on a port
     /// The port must not be bound yet to have a broker.
     #[cfg(feature = "std")]
-    pub fn new_on_port(shmem_provider: SP, monitor: MT, port: u16) -> Result<Self, Error> {
+    pub fn on_port(shmem_provider: SP, monitor: MT, port: u16) -> Result<Self, Error> {
         Ok(Self {
             monitor,
             llmp: llmp::LlmpBroker::create_attach_to_tcp(shmem_provider, port)?,
@@ -372,7 +371,7 @@ where
     /// If the port is not yet bound, it will act as broker
     /// Else, it will act as client.
     #[cfg(feature = "std")]
-    pub fn new_on_port(
+    pub fn on_port(
         shmem_provider: SP,
         port: u16,
         configuration: EventConfig,
@@ -938,7 +937,7 @@ where
                     }
                 }
                 ManagerKind::Broker => {
-                    let event_broker = LlmpEventBroker::<S::Input, MT, SP>::new_on_port(
+                    let event_broker = LlmpEventBroker::<S::Input, MT, SP>::on_port(
                         self.shmem_provider.clone(),
                         self.monitor.take().unwrap(),
                         self.broker_port,
@@ -949,7 +948,7 @@ where
                 }
                 ManagerKind::Client { cpu_core } => {
                     // We are a client
-                    let mgr = LlmpEventManager::<S, SP>::new_on_port(
+                    let mgr = LlmpEventManager::<S, SP>::on_port(
                         self.shmem_provider.clone(),
                         self.broker_port,
                         self.configuration,
@@ -992,7 +991,7 @@ where
             }
 
             // We setup signal handlers to clean up shmem segments used by state restorer
-            #[cfg(unix)]
+            #[cfg(all(unix, not(miri)))]
             if let Err(_e) = unsafe { setup_signal_handler(&mut SHUTDOWN_SIGHANDLER_DATA) } {
                 // We can live without a proper ctrl+c signal handler. Print and ignore.
                 log::error!("Failed to setup signal handlers: {_e}");
@@ -1167,7 +1166,7 @@ where
 
     /// Create a client from port and the input converters
     #[cfg(feature = "std")]
-    pub fn new_on_port(
+    pub fn on_port(
         shmem_provider: SP,
         port: u16,
         converter: Option<IC>,
@@ -1474,6 +1473,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg_attr(miri, ignore)]
     fn test_mgr_state_restore() {
         let rand = StdRand::with_seed(0);
 

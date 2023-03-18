@@ -1,0 +1,15 @@
+[package]
+name = "mc2_fuzzer"
+version = "0.1.0"
+edition = "2021"
+authors = ["Marco Cavenati <cavenati@eurecom.fr>", "Vincenzo Mezzela <mezzela@eurecom.fr>"]
+build = "build.rs"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+libafl = { path = "../../libafl/" }
+libafl_targets = { path = "../../libafl_targets/", features = ["sancov_pcguard_edges", "sancov_cmplog", "libfuzzer"] }
+
+[build-dependencies]
+cc = { version = "1.0" }

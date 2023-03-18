@@ -113,7 +113,7 @@ pub fn main() {
     // This one is composed by two Feedbacks in OR
     let mut feedback = feedback_or!(
         // New maximization map feedback linked to the edges observer and the feedback state
-        MaxMapFeedback::new_tracking(&edges_observer, true, false),
+        MaxMapFeedback::tracking(&edges_observer, true, false),
         // Time feedback, this one does not need a feedback state
         TimeFeedback::with_observer(&time_observer)
     );
@@ -180,7 +180,7 @@ pub fn main() {
             .observers_mut()
             .match_name_mut::<HitcountsMapObserver<StdMapObserver<'_, u8, false>>>("shared_mem")
             .unwrap()
-            .downsize_map(dynamic_map_size);
+            .truncate(dynamic_map_size);
     }
 
     let mut executor = TimeoutForkserverExecutor::with_signal(
