@@ -10,6 +10,5 @@ build = "build.rs"
 [dependencies]
 libafl = { path = "../../libafl/" }
 libafl_targets = { path = "../../libafl_targets/", features = ["sancov_pcguard_edges", "sancov_cmplog", "libfuzzer"] }
-
-[build-dependencies]
-cc = { version = "1.0" }
+libloading = "0.6.4"
+libc = "0.2.101"
