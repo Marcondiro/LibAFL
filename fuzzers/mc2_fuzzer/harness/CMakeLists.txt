@@ -5,7 +5,7 @@ project(Skeleton)
 set(CMAKE_CXX_STANDARD 14)
 
 #find_package(LLVM REQUIRED CONFIG)
-find_package(LLVM 11.0 CONFIG)
+find_package(LLVM 11...<12 CONFIG)
 add_definitions(${LLVM_DEFINITIONS})
 include_directories(${LLVM_INCLUDE_DIRS})
 link_directories(${LLVM_LIBRARY_DIRS})
