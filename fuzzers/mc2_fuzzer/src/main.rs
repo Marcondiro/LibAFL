@@ -13,6 +13,25 @@ struct BranchCmp {
     typ: u8,
 }
 
+struct Interval {
+    low: u8,
+    high: u8,
+}
+
+struct Hyperrectangle {
+    size: u64,
+    interval: Interval,
+}
+
+struct BranchSequence {
+    direction: u8,
+}
+
+struct weight_group {
+    h: Hyperrectangle,
+    weight: f64,
+}
+
 enum Predicate {
     /// 0 0 0 0    Always false (always folded)
     FcmpFalse = 0,
