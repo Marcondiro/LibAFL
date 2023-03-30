@@ -103,7 +103,7 @@ fn compute_prob(br_id: u32, val: BranchCmp) -> f64 {
     let var = if val.count == 1 { 0.0 } else { val.m2 / val.count as f64 };
 
     // integer only for now
-    let shift = if true { 1.0 } else { DBL_MIN }; // TODO dbl_min is defined in clang float.h
+    let shift = if true { 1.0 } else { f64::MIN_POSITIVE };
     let epsilon = 0.001; // 10^-3
 
     let ratio = match val.typ {
