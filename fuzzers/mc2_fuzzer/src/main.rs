@@ -10,7 +10,7 @@ struct BranchCmp {
     sat: u64,
     count: u64,
     time: u64,
-    typ: u8,
+    typ: Predicate,
 }
 
 struct Interval {
@@ -27,7 +27,7 @@ struct BranchSequence {
     direction: u8,
 }
 
-struct weight_group {
+struct WeightGroup {
     h: Hyperrectangle,
     weight: f64,
 }
@@ -92,6 +92,68 @@ fn main() {
     unsafe {
         LLVMFuzzerTestOneInput(input.as_ptr(), 1);
     }
+}
+
+fn compute_prob(br_id: u32, val: BranchCmp) -> f64 {
+    if val.sat > 0 {
+        return val.sat as f64 / val.count as f64;
+    }
+
+    let m = val.mean;
+    let var = if val.count == 1 { 0.0 } else { val.m2 / val.count as f64 };
+
+    // integer only for now
+    let shift = if true { 1.0 } else { DBL_MIN }; // TODO dbl_min is defined in clang float.h
+    let epsilon = 0.001; // 10^-3
+
+    let ratio = match val.typ {
+        Predicate::FcmpOeq |
+        Predicate::FcmpUeq |
+        Predicate::IcmpEq => {
+            /* equal */
+            var / (var + m * m)
+        }
+        Predicate::FcmpOne |
+        Predicate::FcmpUne |
+        Predicate::IcmpNe => {
+            /* not equal */
+            let ratio1 = var / (var + (m - shift) * (m - shift));
+            let ratio2 = var / (var + (m + shift) * (m + shift));
+            ratio1 + ratio2
+        }
+        Predicate::FcmpOgt |
+        Predicate::FcmpUgt |
+        Predicate::IcmpSgt |
+        Predicate::IcmpUgt => {
+            /* unsigned greater than */
+            var / (var + (m - shift) * (m - shift));
+        }
+        Predicate::FcmpOge |
+        Predicate::FcmpUge |
+        Predicate::IcmpSge |
+        Predicate::IcmpUge => {
+            /* unsigned greater or equal */
+            var / (var + m * m)
+        }
+        Predicate::FcmpOlt |
+        Predicate::FcmpUlt |
+        Predicate::IcmpSlt |
+        Predicate::IcmpUlt => {
+            /* unsigned less than */
+            var / (var + (m + shift) * (m + shift))
+        }
+        Predicate::FcmpOle |
+        Predicate::FcmpUle |
+        Predicate::IcmpSle |
+        Predicate::IcmpUle => {
+            /* unsigned less or equal */
+            var / (var + (m + shift) * (m + shift))
+        }
+        _ => 0.0
+    };
+    assert!(ratio >= 0.0);
+    assert!(ratio <= 1.0);
+    return ratio;
 }
 
 // TODO these fns are just placeholders
