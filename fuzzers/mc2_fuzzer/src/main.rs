@@ -197,7 +197,7 @@ fn compute_prob(br_id: u32, val: BranchCmp) -> f64 {
             /* unsigned less or equal */
             var / (var + (m + shift) * (m + shift))
         }
-        _ => 0.0
+            _ => 0.0
     };
     assert!(ratio >= 0.0);
     assert!(ratio <= 1.0);
