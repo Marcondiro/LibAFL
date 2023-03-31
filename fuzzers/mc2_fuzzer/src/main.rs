@@ -1,4 +1,16 @@
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+use std::collections::HashMap;
+
 const MAXPOSSIBLE_BBS: u32 = 4000;
+
+const BRANCH_CMP_SIZE : usize = (MAXPOSSIBLE_BBS as usize + 1) * 2 ;
+
+lazy_static! {
+    static ref BRANCH_CMP : Mutex<HashMap<u32,BranchCmp>> = Mutex::new(HashMap::new());
+
+}
+
 
 extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
@@ -9,9 +21,10 @@ struct BranchCmp {
     m2: f64,
     sat: u64,
     count: u64,
-    time: u64,
+    // time: u64, // maybe we don't need this
     typ: Predicate,
 }
+
 
 struct Interval {
     low: u8,
@@ -87,6 +100,41 @@ enum Predicate {
     IcmpSle = 41,
 }
 
+impl From<u8> for Predicate {
+    fn from(val: u8) -> Self {
+        match val {
+            0 => Predicate::FcmpFalse,
+            1 => Predicate::FcmpOeq,
+            2 => Predicate::FcmpOgt,
+            3 => Predicate::FcmpOge,
+            4 => Predicate::FcmpOlt,
+            5 => Predicate::FcmpOle,
+            6 => Predicate::FcmpOne,
+            7 => Predicate::FcmpOrd,
+            8 => Predicate::FcmpUno,
+            9 => Predicate::FcmpUeq,
+            10 => Predicate::FcmpUgt,
+            11 => Predicate::FcmpUge,
+            12 => Predicate::FcmpUlt,
+            13 => Predicate::FcmpUle,
+            14 => Predicate::FcmpUne,
+            15 => Predicate::FcmpTrue,
+            32 => Predicate::IcmpEq,
+            33 => Predicate::IcmpNe,
+            34 => Predicate::IcmpUgt,
+            35 => Predicate::IcmpUge,
+            36 => Predicate::IcmpUlt,
+            37 => Predicate::IcmpUle,
+            38 => Predicate::IcmpSgt,
+            39 => Predicate::IcmpSge,
+            40 => Predicate::IcmpSlt,
+            41 => Predicate::IcmpSle,
+            _ => panic!("Invalid Predicate value: {}", val),
+        }
+    }
+}
+
+
 fn main() {
     let input = b"a";
     unsafe {
@@ -126,7 +174,7 @@ fn compute_prob(br_id: u32, val: BranchCmp) -> f64 {
         Predicate::IcmpSgt |
         Predicate::IcmpUgt => {
             /* unsigned greater than */
-            var / (var + (m - shift) * (m - shift));
+            var / (var + (m - shift) * (m - shift))
         }
         Predicate::FcmpOge |
         Predicate::FcmpUge |
@@ -234,7 +282,7 @@ fn log_funchelper(
     br_id: u32,
     old_cond: bool,
     args0: u64,
-    args1: u64,
+    args1: u64, 
     bitsize: u8,
     is_signed: u8,
     cond_type: u8,
@@ -242,4 +290,27 @@ fn log_funchelper(
     assert!(br_id < MAXPOSSIBLE_BBS);
 
     false
+}
+
+
+fn update_branch<T: std::ops::Sub<Output=f64> + Copy>(br_id : u32, ret_cond : bool, is_sat: bool, args0 : T, args1 : T, cond_type : u8 ){
+    assert!(cond_type > 0);
+    let ret_cond_u32: u32 = if ret_cond { 1 } else { 0 };
+    let is_sat_u64: u64 = if is_sat { 1 } else { 0 };
+
+    BRANCH_CMP.lock().unwrap().entry(2 * br_id + ret_cond_u32)
+        .and_modify(
+            |bcmp| {
+                bcmp.count += 1;
+                bcmp.sat += is_sat_u64;
+                let delta = (args0 - args1) - bcmp.mean ;
+                bcmp.mean += delta / bcmp.count as f64;
+                let delta2 = (args0 - args1) - bcmp.mean ;
+                bcmp.m2 += delta * delta2;
+            }
+        )
+        .or_insert(
+            BranchCmp{mean : (args0 - args1), count : 1, 
+            sat: is_sat_u64, typ : cond_type.into(), m2 : 0.0}
+        );
 }
