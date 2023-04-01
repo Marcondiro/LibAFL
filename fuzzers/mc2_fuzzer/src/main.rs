@@ -1,13 +1,19 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 const MAXPOSSIBLE_BBS: u32 = 4000;
 
 const BRANCH_CMP_SIZE: usize = (MAXPOSSIBLE_BBS as usize + 1) * 2;
 
+// TODO find a better solution for global stuff
+static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(false);
+static TRACING: AtomicBool = AtomicBool::new(false);
+static EXECUTED_BRANCHES_CNT: AtomicU64 = AtomicU64::new(0);
 lazy_static! {
     static ref BRANCH_CMP: Mutex<HashMap<u32, BranchCmp>> = Mutex::new(HashMap::new());
+    static ref BRANCH_POLICY: Mutex<HashMap<u32, BranchSequence>> = Mutex::new(HashMap::new());
 }
 
 extern "C" {
@@ -34,7 +40,7 @@ struct Hyperrectangle {
 }
 
 struct BranchSequence {
-    direction: u8,
+    direction: bool,
 }
 
 struct WeightGroup {
@@ -42,6 +48,7 @@ struct WeightGroup {
     weight: f64,
 }
 
+#[derive(Copy, Clone, Debug)]
 enum Predicate {
     /// 0 0 0 0    Always false (always folded)
     FcmpFalse = 0,
@@ -128,13 +135,6 @@ impl From<u8> for Predicate {
             41 => Predicate::IcmpSle,
             _ => panic!("Invalid Predicate value: {}", val),
         }
-    }
-}
-
-fn main() {
-    let input = b"a";
-    unsafe {
-        LLVMFuzzerTestOneInput(input.as_ptr(), 1);
     }
 }
 
@@ -273,7 +273,26 @@ fn log_funchelper(
 ) -> bool {
     assert!(br_id < MAXPOSSIBLE_BBS);
 
-    false
+    let mut ret_cond = old_cond;
+    if MONTECARLO_EXECING.load(Ordering::Relaxed) {
+        if let Some(bseq) = BRANCH_POLICY.lock().unwrap().get(&br_id) {
+            ret_cond = bseq.direction;
+        }
+    }
+
+    if TRACING.load(Ordering::Relaxed) {
+        update_branch(
+            br_id,
+            ret_cond,
+            ret_cond == old_cond,
+            args0,
+            args1,
+            cond_type,
+        )
+    }
+
+    EXECUTED_BRANCHES_CNT.fetch_add(1, Ordering::Relaxed);
+    ret_cond
 }
 
 fn update_branch<T: std::ops::Sub<Output = f64> + Copy>(
@@ -307,4 +326,11 @@ fn update_branch<T: std::ops::Sub<Output = f64> + Copy>(
             typ: cond_type.into(),
             m2: 0.0,
         });
+}
+
+fn main() {
+    let input = b"a";
+    unsafe {
+        LLVMFuzzerTestOneInput(input.as_ptr(), 1);
+    }
 }
