@@ -104,6 +104,7 @@ enum Predicate {
     IcmpSle = 41,
 }
 
+// TODO try to remove error prone duplication (enum -> u8 / u8 -> enum)
 impl From<u8> for Predicate {
     fn from(val: u8) -> Self {
         match val {
@@ -295,17 +296,16 @@ fn log_funchelper(
     ret_cond
 }
 
-fn update_branch<T: std::ops::Sub<Output = f64> + Copy>(
-    br_id: u32,
-    ret_cond: bool,
-    is_sat: bool,
-    args0: T,
-    args1: T,
-    cond_type: u8,
-) {
+fn update_branch<T>(br_id: u32, ret_cond: bool, is_sat: bool, args0: T, args1: T, cond_type: u8)
+where
+    i128: From<T>,
+{
     assert!(cond_type > 0);
-    let ret_cond_u32: u32 = if ret_cond { 1 } else { 0 };
-    let is_sat_u64: u64 = if is_sat { 1 } else { 0 };
+    let ret_cond_u32: u32 = ret_cond.into();
+    let is_sat_u64: u64 = is_sat.into();
+
+    let args0_i = i128::from(args0);
+    let args1_i = i128::from(args1);
 
     BRANCH_CMP
         .lock()
@@ -314,13 +314,13 @@ fn update_branch<T: std::ops::Sub<Output = f64> + Copy>(
         .and_modify(|bcmp| {
             bcmp.count += 1;
             bcmp.sat += is_sat_u64;
-            let delta = (args0 - args1) - bcmp.mean;
+            let delta = (args0_i - args1_i) as f64 - bcmp.mean;
             bcmp.mean += delta / bcmp.count as f64;
-            let delta2 = (args0 - args1) - bcmp.mean;
+            let delta2 = (args0_i - args1_i) as f64 - bcmp.mean;
             bcmp.m2 += delta * delta2;
         })
         .or_insert(BranchCmp {
-            mean: (args0 - args1),
+            mean: (args0_i - args1_i) as f64,
             count: 1,
             sat: is_sat_u64,
             typ: cond_type.into(),
