@@ -1,7 +1,15 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+
+// TODO these must be parameters
+const INPUT_FILE: &str = "onebyte.txt";
+const MONTECARLO_EXE: &str = "onebyte.policy";
+const COLLECT_COUNT: bool = true;
+const NOISY_BINARY_SEARCH: bool = true;
+//
 
 const MAXPOSSIBLE_BBS: u32 = 4000;
 
@@ -29,6 +37,7 @@ struct BranchCmp {
     typ: Predicate,
 }
 
+#[derive(Copy, Clone, Debug)]
 struct Interval {
     low: u8,
     high: u8,
@@ -36,7 +45,7 @@ struct Interval {
 
 struct Hyperrectangle {
     size: u64,
-    interval: Interval,
+    interval: Vec<Interval>,
 }
 
 struct BranchSequence {
@@ -326,6 +335,37 @@ where
             typ: cond_type.into(),
             m2: 0.0,
         });
+}
+
+fn counting_helper(h: &Hyperrectangle, input: &[u8], fd: isize) -> isize {
+    BRANCH_CMP.lock().unwrap().clear();
+    // TODO runtime_func.c from line 540
+    0
+}
+
+fn noisy_binary_search(p: f64) {
+    let input = File::open(INPUT_FILE).expect("Unable to open the input file.");
+
+    let mut groups = Vec::new();
+
+    let size = input.metadata().unwrap().len(); // TODO WTF why they assigne file size to hyperrect size
+    let hyperrectangle = Hyperrectangle {
+        size,
+        interval: vec![Interval { low: 0, high: 255 }; size as usize],
+    };
+
+    groups.push(WeightGroup {
+        h: hyperrectangle,
+        weight: 1.0,
+    })
+
+    while !terminate_search(&groups) {
+        todo!();
+    }
+}
+
+fn terminate_search(groups: &[WeightGroup]) -> bool {
+    unimplemented!();
 }
 
 fn main() {
