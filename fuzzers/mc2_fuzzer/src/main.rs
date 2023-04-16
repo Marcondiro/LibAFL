@@ -344,7 +344,7 @@ fn counting_helper(h: &Hyperrectangle, input: &[u8]) -> isize {
 }
 
 
-fn find_group(groups: &[WeightGroup], wL: &mut f64) -> usize {
+fn find_group(groups: &Vec<WeightGroup>, wL: &mut f64) -> usize {
     let mut cumulative_weight : f64 = 0.0;
     let mut group_index : usize = 0;
 
@@ -359,6 +359,48 @@ fn find_group(groups: &[WeightGroup], wL: &mut f64) -> usize {
     *wL = cumulative_weight - groups[group_index].weight;
     group_index
 }
+
+
+fn terminate_search(groups: &Vec<WeightGroup>) -> bool {
+    let threshold = 1.0 / f64::sqrt(groups[0].h.size as f64 * 8.0);
+
+    for group in groups {
+        let mut cardinality : u64 = 1;
+        for j in 0..group.h.size {
+            let interval = group.h.interval[j];
+            cardinality *= (interval.high - interval.low + 1) as u64;
+        }
+        if threshold < (group.weight / cardinality as f64) {
+            // promising hyperrectangle not used!
+            return true;
+        }
+    }
+    false
+}
+
+fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
+    
+    let hyperrectangle = Hyperrectangle {
+        size : groups[group_index].h.size,
+        interval: groups[group_index].h.interval.clone(),
+    };
+
+    groups.insert(group_index, WeightGroup {
+        h: hyperrectangle,
+        weight: 1.0, // the function in the prototype does not update the weight!!
+    } );
+
+    let mut dim = 0;
+    while dim < groups[group_index].h.size && groups[group_index].h.interval[dim].high == groups[group_index].h.interval[dim].low {
+        dim += 1;
+    }
+
+    let m : u8 = (groups[group_index].h.interval[dim].high + groups[group_index].h.interval[dim].low) / 2;
+    groups[group_index].h.interval[dim].high = m;
+    groups[group_index + 1].h.interval[dim].low = m + 1;
+    
+}
+
 
 
 
@@ -379,29 +421,16 @@ fn noisy_binary_search(p: f64) {
 
     while !terminate_search(&groups) {
 
-        let wL : f64 = 0.0;
+        let mut wL : f64 = 0.0;
+        let group_index : usize = find_group(&groups, &mut wL);
+
+        create_new_weight_groups(&mut groups, group_index);
 
         
         todo!();
     }
 }
 
-fn terminate_search(groups: &[WeightGroup]) -> bool {
-    let threshold = 1.0 / f64::sqrt(groups[0].h.size as f64 * 8.0);
-
-    for group in groups {
-        let mut cardinality : u64 = 1;
-        for j in 0..group.h.size {
-            let interval = group.h.interval[j];
-            cardinality *= (interval.high - interval.low + 1) as u64;
-        }
-        if threshold < (group.weight / cardinality as f64) {
-            // promising hyperrectangle not used!
-            return true;
-        }
-    }
-    false
-}
 
 fn main() {
     let input = b"a";
