@@ -5,7 +5,6 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 // TODO these must be parameters
-const INPUT_FILE: &str = "onebyte.txt";
 const MONTECARLO_EXE: &str = "onebyte.policy";
 const COLLECT_COUNT: bool = true;
 const NOISY_BINARY_SEARCH: bool = true;
@@ -44,7 +43,7 @@ struct Interval {
 }
 
 struct Hyperrectangle {
-    size: u64,
+    size: usize,
     interval: Vec<Interval>,
 }
 
@@ -337,18 +336,37 @@ where
         });
 }
 
-fn counting_helper(h: &Hyperrectangle, input: &[u8], fd: isize) -> isize {
+fn counting_helper(h: &Hyperrectangle, input: &[u8]) -> isize {
+
     BRANCH_CMP.lock().unwrap().clear();
     // TODO runtime_func.c from line 540
     0
 }
 
+
+fn find_group(groups: &[WeightGroup], wL: &mut f64) -> usize {
+    let mut cumulative_weight : f64 = 0.0;
+    let mut group_index : usize = 0;
+
+    for (i, group) in groups.iter().enumerate() {
+        cumulative_weight += group.weight;
+        if cumulative_weight > 0.5 {
+            group_index = i;
+            break;
+        }
+    }
+
+    *wL = cumulative_weight - groups[group_index].weight;
+    group_index
+}
+
+
+
 fn noisy_binary_search(p: f64) {
-    let input = File::open(INPUT_FILE).expect("Unable to open the input file.");
 
     let mut groups = Vec::new();
 
-    let size = input.metadata().unwrap().len(); // TODO WTF why they assigne file size to hyperrect size
+    let size = 1; // let's start from 1 byte size!
     let hyperrectangle = Hyperrectangle {
         size,
         interval: vec![Interval { low: 0, high: 255 }; size as usize],
@@ -357,15 +375,32 @@ fn noisy_binary_search(p: f64) {
     groups.push(WeightGroup {
         h: hyperrectangle,
         weight: 1.0,
-    })
+    });
 
     while !terminate_search(&groups) {
+
+        let wL : f64 = 0.0;
+
+        
         todo!();
     }
 }
 
 fn terminate_search(groups: &[WeightGroup]) -> bool {
-    unimplemented!();
+    let threshold = 1.0 / f64::sqrt(groups[0].h.size as f64 * 8.0);
+
+    for group in groups {
+        let mut cardinality : u64 = 1;
+        for j in 0..group.h.size {
+            let interval = group.h.interval[j];
+            cardinality *= (interval.high - interval.low + 1) as u64;
+        }
+        if threshold < (group.weight / cardinality as f64) {
+            // promising hyperrectangle not used!
+            return true;
+        }
+    }
+    false
 }
 
 fn main() {
