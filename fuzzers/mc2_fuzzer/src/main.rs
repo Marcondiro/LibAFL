@@ -1,6 +1,5 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::fs::File;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -17,6 +16,7 @@ const BRANCH_CMP_SIZE: usize = (MAXPOSSIBLE_BBS as usize + 1) * 2;
 // TODO find a better solution for global stuff
 static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(false);
 static TRACING: AtomicBool = AtomicBool::new(false);
+static IS_LEFT: AtomicBool = AtomicBool::new(false);
 static EXECUTED_BRANCHES_CNT: AtomicU64 = AtomicU64::new(0);
 lazy_static! {
     static ref BRANCH_CMP: Mutex<HashMap<u32, BranchCmp>> = Mutex::new(HashMap::new());
@@ -42,6 +42,7 @@ struct Interval {
     high: u8,
 }
 
+#[derive(Clone, Debug)]
 struct Hyperrectangle {
     size: usize,
     interval: Vec<Interval>,
@@ -147,7 +148,7 @@ impl From<u8> for Predicate {
     }
 }
 
-fn compute_prob(br_id: u32, val: BranchCmp) -> f64 {
+fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
     if val.sat > 0 {
         return val.sat as f64 / val.count as f64;
     }
@@ -336,17 +337,15 @@ where
         });
 }
 
-fn counting_helper(h: &Hyperrectangle, input: &[u8]) -> isize {
-
+fn counting_helper(h: &Hyperrectangle, input: &[u8]) -> bool {
     BRANCH_CMP.lock().unwrap().clear();
     // TODO runtime_func.c from line 540
-    0
+    false
 }
 
-
-fn find_group(groups: &Vec<WeightGroup>, wL: &mut f64) -> usize {
-    let mut cumulative_weight : f64 = 0.0;
-    let mut group_index : usize = 0;
+fn find_group(groups: &Vec<WeightGroup>, w_l: &mut f64) -> usize {
+    let mut cumulative_weight: f64 = 0.0;
+    let mut group_index: usize = 0;
 
     for (i, group) in groups.iter().enumerate() {
         cumulative_weight += group.weight;
@@ -356,57 +355,92 @@ fn find_group(groups: &Vec<WeightGroup>, wL: &mut f64) -> usize {
         }
     }
 
-    *wL = cumulative_weight - groups[group_index].weight;
+    *w_l = cumulative_weight - groups[group_index].weight;
     group_index
 }
 
-
-fn terminate_search(groups: &Vec<WeightGroup>) -> bool {
+fn terminate_search(groups: &[WeightGroup]) -> Option<Hyperrectangle> {
     let threshold = 1.0 / f64::sqrt(groups[0].h.size as f64 * 8.0);
 
     for group in groups {
-        let mut cardinality : u64 = 1;
+        let mut cardinality: u64 = 1;
         for j in 0..group.h.size {
             let interval = group.h.interval[j];
             cardinality *= (interval.high - interval.low + 1) as u64;
         }
         if threshold < (group.weight / cardinality as f64) {
-            // promising hyperrectangle not used!
-            return true;
+            return Some(group.h.clone());
         }
     }
-    false
+    None
 }
 
 fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
-    
     let hyperrectangle = Hyperrectangle {
-        size : groups[group_index].h.size,
+        size: groups[group_index].h.size,
         interval: groups[group_index].h.interval.clone(),
     };
 
-    groups.insert(group_index, WeightGroup {
-        h: hyperrectangle,
-        weight: 1.0, // the function in the prototype does not update the weight!!
-    } );
+    groups.insert(
+        group_index,
+        WeightGroup {
+            h: hyperrectangle,
+            weight: 1.0, // the function in the prototype does not update the weight!!
+        },
+    );
 
     let mut dim = 0;
-    while dim < groups[group_index].h.size && groups[group_index].h.interval[dim].high == groups[group_index].h.interval[dim].low {
+    while dim < groups[group_index].h.size
+        && groups[group_index].h.interval[dim].high == groups[group_index].h.interval[dim].low
+    {
         dim += 1;
     }
 
-    let m : u8 = (groups[group_index].h.interval[dim].high + groups[group_index].h.interval[dim].low) / 2;
+    let m: u8 =
+        (groups[group_index].h.interval[dim].high + groups[group_index].h.interval[dim].low) / 2;
     groups[group_index].h.interval[dim].high = m;
     groups[group_index + 1].h.interval[dim].low = m + 1;
-    
 }
 
+fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle, input: &[u8]) -> bool {
+    let is_child_l = counting_helper(i_l, input);
+    if is_child_l {
+        return true;
+    }
 
+    let mut i_l_count = 1.0;
+    for (key, val) in BRANCH_CMP.lock().unwrap().iter() {
+        let tmp_count = compute_prob(*key, val);
+        if i_l_count > tmp_count {
+            i_l_count = tmp_count;
+        }
+    }
 
+    let is_child_r = counting_helper(i_r, input);
+    if is_child_r {
+        return true;
+    }
+
+    let mut i_r_count = 1.0;
+    for (key, val) in BRANCH_CMP.lock().unwrap().iter() {
+        let tmp_count = compute_prob(*key, val);
+        if i_r_count > tmp_count {
+            i_r_count = tmp_count;
+        }
+    }
+
+    IS_LEFT.store(i_l_count >= i_r_count, Ordering::Relaxed);
+
+    false
+}
+
+fn update_weight_groups(groups: &[WeightGroup], group_index: usize, p: f64, z: f64, is_left: bool) {
+    todo!()
+}
 
 fn noisy_binary_search(p: f64) {
-
     let mut groups = Vec::new();
+    let mut input = Vec::new();
 
     let size = 1; // let's start from 1 byte size!
     let hyperrectangle = Hyperrectangle {
@@ -419,18 +453,45 @@ fn noisy_binary_search(p: f64) {
         weight: 1.0,
     });
 
-    while !terminate_search(&groups) {
+    let mut promising_hyperrectangle = groups[0].h.clone();
+    loop {
+        match terminate_search(&groups) {
+            None => break,
+            Some(ph) => {
+                promising_hyperrectangle = ph;
+                let mut w_l = 0.0;
+                let group_index = find_group(&groups, &mut w_l);
 
-        let mut wL : f64 = 0.0;
-        let group_index : usize = find_group(&groups, &mut wL);
+                create_new_weight_groups(&mut groups, group_index);
 
-        create_new_weight_groups(&mut groups, group_index);
+                let is_child = noisy_counting_oracle(
+                    &groups[group_index].h,
+                    &groups[group_index + 1].h,
+                    &input,
+                );
 
-        
-        todo!();
+                if is_child {
+                    return;
+                }
+
+                let z = if IS_LEFT.load(Ordering::Relaxed) {
+                    (w_l + groups[group_index].weight) * (1.0 - p) + (1.0 - w_l) * p
+                } else {
+                    (w_l + groups[group_index].weight) * p + (1.0 - w_l) * (1.0 - p)
+                };
+
+                update_weight_groups(&groups, group_index, p, z, IS_LEFT.load(Ordering::Relaxed))
+            }
+        }
+    }
+
+    println!("--- Most Promising Input Region ----");
+    println!("{:?}", promising_hyperrectangle);
+    println!("--- Obtained groups at the end of execution ----");
+    for wg in groups {
+        println!("{:?}", wg.h);
     }
 }
-
 
 fn main() {
     let input = b"a";
