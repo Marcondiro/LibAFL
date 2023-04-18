@@ -198,8 +198,6 @@ fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
     return ratio;
 }
 
-// TODO these fns are just placeholders
-
 #[no_mangle]
 pub extern "C" fn log_func8(
     br_id: u32,
@@ -434,8 +432,28 @@ fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle, input: &[u8
     false
 }
 
-fn update_weight_groups(groups: &[WeightGroup], group_index: usize, p: f64, z: f64, is_left: bool) {
-    todo!()
+fn update_weight_groups(
+    groups: &mut [WeightGroup],
+    group_index: usize,
+    p: f64,
+    z: f64,
+    is_left: bool,
+) {
+    for i in 0..group_index {
+        if is_left {
+            groups[i].weight *= (1.0 - p) / z;
+        } else {
+            groups[i].weight *= p / z;
+        }
+    }
+
+    for i in group_index..groups.len() {
+        if is_left {
+            groups[i].weight *= p / z;
+        } else {
+            groups[i].weight *= (1.0 - p) / z;
+        }
+    }
 }
 
 fn noisy_binary_search(p: f64) {
@@ -480,7 +498,13 @@ fn noisy_binary_search(p: f64) {
                     (w_l + groups[group_index].weight) * p + (1.0 - w_l) * (1.0 - p)
                 };
 
-                update_weight_groups(&groups, group_index, p, z, IS_LEFT.load(Ordering::Relaxed))
+                update_weight_groups(
+                    &mut groups,
+                    group_index,
+                    p,
+                    z,
+                    IS_LEFT.load(Ordering::Relaxed),
+                )
             }
         }
     }
