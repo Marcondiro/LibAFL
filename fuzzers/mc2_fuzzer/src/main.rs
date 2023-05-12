@@ -10,6 +10,7 @@ const NOISY_BINARY_SEARCH: bool = true;
 //
 
 const MAXPOSSIBLE_BBS: u32 = 4000;
+const EXECUTION_NUNMBER: usize = 5;
 
 const BRANCH_CMP_SIZE: usize = (MAXPOSSIBLE_BBS as usize + 1) * 2;
 
@@ -335,9 +336,21 @@ where
         });
 }
 
-fn counting_helper(h: &Hyperrectangle, input: &[u8]) -> bool {
+fn counting_helper(h: &Hyperrectangle, input: &mut [u8]) -> bool {
+    // TODO togliere "input" param
     BRANCH_CMP.lock().unwrap().clear();
-    // TODO runtime_func.c from line 540
+
+    for exec_num in 0..EXECUTION_NUNMBER {
+        for i in 0..h.size {
+            input[i] = rand::random::<u8>() % (h.interval[i].high - h.interval[i].low + 1)
+                + h.interval[i].low;
+        }
+
+        unsafe {
+            LLVMFuzzerTestOneInput(input.as_ptr(), h.size); //TODO try to use libafl wrapper
+        }
+    }
+
     false
 }
 
@@ -400,7 +413,7 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
     groups[group_index + 1].h.interval[dim].low = m + 1;
 }
 
-fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle, input: &[u8]) -> bool {
+fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle, input: &mut [u8]) -> bool {
     let is_child_l = counting_helper(i_l, input);
     if is_child_l {
         return true;
@@ -485,7 +498,7 @@ fn noisy_binary_search(p: f64) {
                 let is_child = noisy_counting_oracle(
                     &groups[group_index].h,
                     &groups[group_index + 1].h,
-                    &input,
+                    &mut input,
                 );
 
                 if is_child {
