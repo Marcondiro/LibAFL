@@ -2,19 +2,11 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::thread::sleep;
-use std::time::Duration;
 
-// TODO these must be parameters
-// const MONTECARLO_EXE: &str = "onebyte.policy";
-// const COLLECT_COUNT: bool = true;
-// const NOISY_BINARY_SEARCH: bool = true;
-//
 
 const MAXPOSSIBLE_BBS: u32 = 4000;
 const EXECUTION_NUMBER: usize = 5;
 
-// const BRANCH_CMP_SIZE: usize = (MAXPOSSIBLE_BBS as usize + 1) * 2;
 
 // TODO find a better solution for global stuff
 static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(true);
@@ -36,7 +28,6 @@ struct BranchCmp {
     m2: f64,
     sat: u64,
     count: u64,
-    // time: u64, // maybe we don't need this
     typ: Predicate,
 }
 
@@ -153,7 +144,7 @@ impl From<u8> for Predicate {
     }
 }
 
-fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
+fn compute_prob(val: &BranchCmp) -> f64 {
     println!("[ DEBUG\tComputeProb ]\tval : {:?}", val);
 
     if val.sat > 0 {
@@ -414,23 +405,18 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
     };
 
     let mut dim = 0;
+    // TODO fix this to avoid dim == size
     while dim < groups[group_index].h.size
         && groups[group_index].h.interval[dim].high == groups[group_index].h.interval[dim].low
     {
         dim += 1;
     }
 
-    // TODO added by us to avoid panic
-    if dim >= groups[group_index].h.size {
-        return;
-    }
-    //
-
     groups.insert(
         group_index,
         WeightGroup {
             h: hyperrectangle,
-            weight: 1.0, // the function in the prototype does not update the weight!!
+            weight: groups[group_index].weight
         },
     );
 
@@ -444,8 +430,8 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
 fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
     counting_helper(i_l);
     let mut i_l_count = 1.0;
-    for (key, val) in BRANCH_CMP.lock().unwrap().iter() {
-        let tmp_count = compute_prob(*key, val);
+    for val in BRANCH_CMP.lock().unwrap().values() {
+        let tmp_count = compute_prob(val);
         if i_l_count > tmp_count {
             i_l_count = tmp_count;
         }
@@ -453,8 +439,8 @@ fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
 
     counting_helper(i_r);
     let mut i_r_count = 1.0;
-    for (key, val) in BRANCH_CMP.lock().unwrap().iter() {
-        let tmp_count = compute_prob(*key, val);
+    for val in BRANCH_CMP.lock().unwrap().values() {
+        let tmp_count = compute_prob(val);
         if i_r_count > tmp_count {
             i_r_count = tmp_count;
         }
@@ -506,7 +492,7 @@ fn noisy_binary_search(p: f64) {
         weight: 1.0,
     });
 
-    let mut promising_hyperrectangle = groups[0].h.clone();
+    let promising_hyperrectangle;
     loop {
         match terminate_search(&groups) {
             None => {
