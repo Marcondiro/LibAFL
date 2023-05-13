@@ -442,7 +442,6 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
 
 fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
     counting_helper(i_l);
-
     let mut i_l_count = 1.0;
     for (key, val) in BRANCH_CMP.lock().unwrap().iter() {
         let tmp_count = compute_prob(*key, val);
@@ -452,7 +451,6 @@ fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
     }
 
     counting_helper(i_r);
-
     let mut i_r_count = 1.0;
     for (key, val) in BRANCH_CMP.lock().unwrap().iter() {
         let tmp_count = compute_prob(*key, val);
@@ -461,22 +459,7 @@ fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
         }
     }
 
-    println!(
-        "[ DEBUG noisy counting oracle ] i_l_count: {:?} - i_r_count {:?}",
-        i_l_count, i_r_count
-    );
-
     IS_LEFT.store(i_l_count >= i_r_count, Ordering::Relaxed);
-
-    println!(
-        "[ DEBUG noisy counting oracle ] IS_LEFT: {:?}",
-        IS_LEFT.load(Ordering::Relaxed)
-    );
-
-    if i_l_count == 1.0 && i_r_count == 1.0 {
-        sleep(Duration::from_secs(1));
-        panic!("i_l_count == 1.0 || i_r_count == 1.0");
-    }
 }
 
 fn update_weight_groups(
@@ -581,7 +564,7 @@ fn main() {
         .lock()
         .unwrap()
         .entry(0)
-        .or_insert(BranchSequence { direction: true });
+        .or_insert(BranchSequence { direction: false });
 
     noisy_binary_search(0.01);
 }
