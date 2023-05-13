@@ -434,8 +434,9 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
         },
     );
 
-    let m =
-        (groups[group_index].h.interval[dim].high + groups[group_index].h.interval[dim].low) / 2;
+    let m = ((groups[group_index].h.interval[dim].high as u16
+        + groups[group_index].h.interval[dim].low as u16)
+        / 2) as u8;
     groups[group_index].h.interval[dim].high = m;
     groups[group_index + 1].h.interval[dim].low = m + 1;
 }
