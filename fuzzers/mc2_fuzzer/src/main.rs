@@ -4,19 +4,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 // TODO these must be parameters
-const MONTECARLO_EXE: &str = "onebyte.policy";
-const COLLECT_COUNT: bool = true;
-const NOISY_BINARY_SEARCH: bool = true;
+// const MONTECARLO_EXE: &str = "onebyte.policy";
+// const COLLECT_COUNT: bool = true;
+// const NOISY_BINARY_SEARCH: bool = true;
 //
 
 const MAXPOSSIBLE_BBS: u32 = 4000;
-const EXECUTION_NUNMBER: usize = 5;
+const EXECUTION_NUMBER: usize = 5;
 
-const BRANCH_CMP_SIZE: usize = (MAXPOSSIBLE_BBS as usize + 1) * 2;
+// const BRANCH_CMP_SIZE: usize = (MAXPOSSIBLE_BBS as usize + 1) * 2;
 
 // TODO find a better solution for global stuff
-static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(false);
-static TRACING: AtomicBool = AtomicBool::new(false);
+static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(true);
+static TRACING: AtomicBool = AtomicBool::new(true);
 static IS_LEFT: AtomicBool = AtomicBool::new(false);
 static EXECUTED_BRANCHES_CNT: AtomicU64 = AtomicU64::new(0);
 lazy_static! {
@@ -28,6 +28,7 @@ extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
 }
 
+#[derive(Debug)]
 struct BranchCmp {
     mean: f64,
     m2: f64,
@@ -151,6 +152,8 @@ impl From<u8> for Predicate {
 }
 
 fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
+    println!("[ DEBUG\tComputeProb ]\tval : {:?}",val);
+
     if val.sat > 0 {
         return val.sat as f64 / val.count as f64;
     }
@@ -164,7 +167,9 @@ fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
 
     // integer only for now
     let shift = if true { 1.0 } else { f64::MIN_POSITIVE };
-    let epsilon = 0.001; // 10^-3
+    
+    // was present in the prototype, but it's never used (?)
+    // let epsilon = 0.001; // 10^-3
 
     let ratio = match val.typ {
         Predicate::FcmpOeq | Predicate::FcmpUeq | Predicate::IcmpEq => {
@@ -281,6 +286,7 @@ fn log_funchelper(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
+    println!("[ DEBUG_TARGET\tLogFuncHelper ]");
     assert!(br_id < MAXPOSSIBLE_BBS);
 
     let mut ret_cond = old_cond;
@@ -309,6 +315,7 @@ fn update_branch<T>(br_id: u32, ret_cond: bool, is_sat: bool, args0: T, args1: T
 where
     i128: From<T>,
 {
+    println!("[ DEBUG\tUpdateBranch ]");
     assert!(cond_type > 0);
     let ret_cond_u32: u32 = ret_cond.into();
     let is_sat_u64: u64 = is_sat.into();
@@ -338,17 +345,21 @@ where
 }
 
 fn counting_helper(h: &Hyperrectangle) {
-    // TODO togliere "input" param
-    let mut input = Vec::new();
+
+    println!("[ DEBUG\tCountingHelper ]\tHyperrectangle : {:?}", h);
+
     BRANCH_CMP.lock().unwrap().clear();
 
-    for exec_num in 0..EXECUTION_NUNMBER {
+    for _ in 0..EXECUTION_NUMBER {
+        let mut input = Vec::new();
         for i in 0..h.size {
             input.push(
                 rand::random::<u8>() % (h.interval[i].high - h.interval[i].low + 1)
                     + h.interval[i].low,
             );
         }
+
+        println!("[ DEBUG\tCountingHelper ]\trunning target with input : {:?}", input);
 
         unsafe {
             LLVMFuzzerTestOneInput(input.as_ptr(), h.size); //TODO try to use libafl wrapper
@@ -381,11 +392,13 @@ fn terminate_search(groups: &[WeightGroup]) -> Option<Hyperrectangle> {
             let interval = group.h.interval[j];
             cardinality *= (interval.high - interval.low) as u64 + 1;
         }
-        println!("{:?}", group);
+
         if threshold < (group.weight / cardinality as f64) {
+            println!("[ DEBUG\tTerminateSearch ]\treturning : True");
             return Some(group.h.clone());
         }
     }
+    println!("[ DEBUG\tTerminateSearch ]\treturning : False");
     None
 }
 
@@ -422,7 +435,7 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
     groups[group_index + 1].h.interval[dim].low = m + 1;
 }
 
-fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle, input: &mut [u8]) {
+fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
     counting_helper(i_l);
 
     let mut i_l_count = 1.0;
@@ -453,6 +466,9 @@ fn update_weight_groups(
     z: f64,
     is_left: bool,
 ) {
+
+    println!("[ DEBUG\tUpdateWeightGroup ]\tp : {}, z : {}, is_left : {}", p, z, is_left);
+
     for i in 0..group_index {
         if is_left {
             groups[i].weight *= (1.0 - p) / z;
@@ -472,7 +488,6 @@ fn update_weight_groups(
 
 fn noisy_binary_search(p: f64) {
     let mut groups = Vec::new();
-    let mut input = Vec::new();
 
     let size = 1; // let's start from 1 byte size!
     let hyperrectangle = Hyperrectangle {
@@ -489,15 +504,20 @@ fn noisy_binary_search(p: f64) {
     loop {
         match terminate_search(&groups) {
             None => {
+
+                println!("[ DEBUG\tNoisyBinarySearch ]\tcurrent groups : {:?}", groups);
                 let mut w_l = 0.0;
                 let group_index = find_group(&groups, &mut w_l);
 
+                println!("[ DEBUG\tNoisyBinarySearch ]\tfound group index : {:?}", group_index);
+
                 create_new_weight_groups(&mut groups, group_index);
+
+                println!("[ DEBUG\tNoisyBinarySearch ]\tgroups after split: {:?}", groups);
 
                 noisy_counting_oracle(
                     &groups[group_index].h,
                     &groups[group_index + 1].h,
-                    &mut input,
                 );
 
                 let z = if IS_LEFT.load(Ordering::Relaxed) {
@@ -530,16 +550,12 @@ fn noisy_binary_search(p: f64) {
 }
 
 fn main() {
-    // let input = b"a";
-    // unsafe {
-    //     LLVMFuzzerTestOneInput(input.as_ptr(), 1);
-    // }
 
     BRANCH_POLICY
         .lock()
         .unwrap()
         .entry(0)
-        .or_insert(BranchSequence { direction: true });
+        .or_insert(BranchSequence { direction: false });
 
     noisy_binary_search(0.01);
 }

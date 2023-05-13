@@ -8,6 +8,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
   // different?
   //   assert(size == 1LU);
   unsigned int byte0 = data[0];
+  (void)size;
 
   printf("%d is input\n", byte0);
 
