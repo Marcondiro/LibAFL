@@ -1,6 +1,6 @@
 use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 const MAXPOSSIBLE_BBS: u32 = 4000;
@@ -10,7 +10,7 @@ const EXECUTION_NUMBER: usize = 5;
 static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(true);
 static TRACING: AtomicBool = AtomicBool::new(true);
 static IS_LEFT: AtomicBool = AtomicBool::new(false);
-static EXECUTED_BRANCHES_CNT: AtomicU64 = AtomicU64::new(0);
+
 lazy_static! {
     static ref BRANCH_CMP: Mutex<HashMap<u32, BranchCmp>> = Mutex::new(HashMap::new());
     static ref BRANCH_POLICY: Mutex<HashMap<u32, BranchSequence>> = Mutex::new(HashMap::new());
@@ -286,7 +286,6 @@ where
         )
     }
 
-    EXECUTED_BRANCHES_CNT.fetch_add(1, Ordering::Relaxed);
     ret_cond
 }
 
