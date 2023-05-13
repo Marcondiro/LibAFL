@@ -2,6 +2,8 @@ use lazy_static::lazy_static;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::thread::sleep;
+use std::time::Duration;
 
 // TODO these must be parameters
 // const MONTECARLO_EXE: &str = "onebyte.policy";
@@ -152,7 +154,7 @@ impl From<u8> for Predicate {
 }
 
 fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
-    println!("[ DEBUG\tComputeProb ]\tval : {:?}",val);
+    println!("[ DEBUG\tComputeProb ]\tval : {:?}", val);
 
     if val.sat > 0 {
         return val.sat as f64 / val.count as f64;
@@ -167,7 +169,7 @@ fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
 
     // integer only for now
     let shift = if true { 1.0 } else { f64::MIN_POSITIVE };
-    
+
     // was present in the prototype, but it's never used (?)
     // let epsilon = 0.001; // 10^-3
 
@@ -202,6 +204,7 @@ fn compute_prob(br_id: u32, val: &BranchCmp) -> f64 {
     };
     assert!(ratio >= 0.0);
     assert!(ratio <= 1.0);
+    println!("[ DEBUG\tComputeProb ]\tratio : {:?}", ratio);
     return ratio;
 }
 
@@ -345,7 +348,6 @@ where
 }
 
 fn counting_helper(h: &Hyperrectangle) {
-
     println!("[ DEBUG\tCountingHelper ]\tHyperrectangle : {:?}", h);
 
     BRANCH_CMP.lock().unwrap().clear();
@@ -359,7 +361,10 @@ fn counting_helper(h: &Hyperrectangle) {
             );
         }
 
-        println!("[ DEBUG\tCountingHelper ]\trunning target with input : {:?}", input);
+        println!(
+            "[ DEBUG\tCountingHelper ]\trunning target with input : {:?}",
+            input
+        );
 
         unsafe {
             LLVMFuzzerTestOneInput(input.as_ptr(), h.size); //TODO try to use libafl wrapper
@@ -456,7 +461,22 @@ fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
         }
     }
 
+    println!(
+        "[ DEBUG noisy counting oracle ] i_l_count: {:?} - i_r_count {:?}",
+        i_l_count, i_r_count
+    );
+
     IS_LEFT.store(i_l_count >= i_r_count, Ordering::Relaxed);
+
+    println!(
+        "[ DEBUG noisy counting oracle ] IS_LEFT: {:?}",
+        IS_LEFT.load(Ordering::Relaxed)
+    );
+
+    if i_l_count == 1.0 && i_r_count == 1.0 {
+        sleep(Duration::from_secs(1));
+        panic!("i_l_count == 1.0 || i_r_count == 1.0");
+    }
 }
 
 fn update_weight_groups(
@@ -466,10 +486,12 @@ fn update_weight_groups(
     z: f64,
     is_left: bool,
 ) {
+    println!(
+        "[ DEBUG\tUpdateWeightGroup ]\tp : {}, z : {}, is_left : {}",
+        p, z, is_left
+    );
 
-    println!("[ DEBUG\tUpdateWeightGroup ]\tp : {}, z : {}, is_left : {}", p, z, is_left);
-
-    for i in 0..group_index {
+    for i in 0..(group_index + 1) {
         if is_left {
             groups[i].weight *= (1.0 - p) / z;
         } else {
@@ -477,7 +499,7 @@ fn update_weight_groups(
         }
     }
 
-    for i in group_index..groups.len() {
+    for i in (group_index + 1)..groups.len() {
         if is_left {
             groups[i].weight *= p / z;
         } else {
@@ -504,21 +526,26 @@ fn noisy_binary_search(p: f64) {
     loop {
         match terminate_search(&groups) {
             None => {
-
-                println!("[ DEBUG\tNoisyBinarySearch ]\tcurrent groups : {:?}", groups);
+                println!(
+                    "[ DEBUG\tNoisyBinarySearch ]\tcurrent groups : {:?}",
+                    groups
+                );
                 let mut w_l = 0.0;
                 let group_index = find_group(&groups, &mut w_l);
 
-                println!("[ DEBUG\tNoisyBinarySearch ]\tfound group index : {:?}", group_index);
+                println!(
+                    "[ DEBUG\tNoisyBinarySearch ]\tfound group index : {:?}",
+                    group_index
+                );
 
                 create_new_weight_groups(&mut groups, group_index);
 
-                println!("[ DEBUG\tNoisyBinarySearch ]\tgroups after split: {:?}", groups);
-
-                noisy_counting_oracle(
-                    &groups[group_index].h,
-                    &groups[group_index + 1].h,
+                println!(
+                    "[ DEBUG\tNoisyBinarySearch ]\tgroups after split: {:?}",
+                    groups
                 );
+
+                noisy_counting_oracle(&groups[group_index].h, &groups[group_index + 1].h);
 
                 let z = if IS_LEFT.load(Ordering::Relaxed) {
                     (w_l + groups[group_index].weight) * (1.0 - p) + (1.0 - w_l) * p
@@ -550,12 +577,11 @@ fn noisy_binary_search(p: f64) {
 }
 
 fn main() {
-
     BRANCH_POLICY
         .lock()
         .unwrap()
         .entry(0)
-        .or_insert(BranchSequence { direction: false });
+        .or_insert(BranchSequence { direction: true });
 
     noisy_binary_search(0.01);
 }
