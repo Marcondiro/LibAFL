@@ -3,10 +3,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-
 const MAXPOSSIBLE_BBS: u32 = 4000;
 const EXECUTION_NUMBER: usize = 5;
-
 
 // TODO find a better solution for global stuff
 static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(true);
@@ -208,15 +206,11 @@ pub extern "C" fn log_func8(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    log_funchelper(
-        br_id,
-        old_cond,
-        arg1.into(),
-        arg2.into(),
-        8,
-        is_signed,
-        cond_type,
-    )
+    if is_signed != 0 {
+        log_funchelper(br_id, old_cond, arg1 as i8, arg2 as i8, cond_type)
+    } else {
+        log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    }
 }
 
 #[no_mangle]
@@ -228,15 +222,11 @@ pub extern "C" fn log_func16(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    log_funchelper(
-        br_id,
-        old_cond,
-        arg1.into(),
-        arg2.into(),
-        16,
-        is_signed,
-        cond_type,
-    )
+    if is_signed != 0 {
+        log_funchelper(br_id, old_cond, arg1 as i16, arg2 as i16, cond_type)
+    } else {
+        log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    }
 }
 
 #[no_mangle]
@@ -248,15 +238,11 @@ pub extern "C" fn log_func32(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    log_funchelper(
-        br_id,
-        old_cond,
-        arg1.into(),
-        arg2.into(),
-        32,
-        is_signed,
-        cond_type,
-    )
+    if is_signed != 0 {
+        log_funchelper(br_id, old_cond, arg1 as i32, arg2 as i32, cond_type)
+    } else {
+        log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    }
 }
 
 #[no_mangle]
@@ -268,18 +254,17 @@ pub extern "C" fn log_func64(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    log_funchelper(br_id, old_cond, arg1, arg2, 64, is_signed, cond_type)
+    if is_signed != 0 {
+        log_funchelper(br_id, old_cond, arg1 as i64, arg2 as i64, cond_type)
+    } else {
+        log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    }
 }
 
-fn log_funchelper(
-    br_id: u32,
-    old_cond: bool,
-    args0: u64,
-    args1: u64,
-    bitsize: u8,
-    is_signed: u8,
-    cond_type: u8,
-) -> bool {
+fn log_funchelper<T>(br_id: u32, old_cond: bool, args0: T, args1: T, cond_type: u8) -> bool
+where
+    i128: From<T>,
+{
     println!("[ DEBUG_TARGET\tLogFuncHelper ]");
     assert!(br_id < MAXPOSSIBLE_BBS);
 
@@ -416,7 +401,7 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
         group_index,
         WeightGroup {
             h: hyperrectangle,
-            weight: groups[group_index].weight
+            weight: groups[group_index].weight,
         },
     );
 
