@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-const MAXPOSSIBLE_BBS: u32 = 4000;
 const EXECUTION_NUMBER: usize = 5;
 
 // TODO find a better solution for global stuff
@@ -143,8 +142,6 @@ impl From<u8> for Predicate {
 }
 
 fn compute_prob(val: &BranchCmp) -> f64 {
-    println!("[ DEBUG\tComputeProb ]\tval : {:?}", val);
-
     if val.sat > 0 {
         return val.sat as f64 / val.count as f64;
     }
@@ -193,7 +190,6 @@ fn compute_prob(val: &BranchCmp) -> f64 {
     };
     assert!(ratio >= 0.0);
     assert!(ratio <= 1.0);
-    println!("[ DEBUG\tComputeProb ]\tratio : {:?}", ratio);
     return ratio;
 }
 
@@ -265,9 +261,6 @@ fn log_funchelper<T>(br_id: u32, old_cond: bool, args0: T, args1: T, cond_type: 
 where
     i128: From<T>,
 {
-    println!("[ DEBUG_TARGET\tLogFuncHelper ]");
-    assert!(br_id < MAXPOSSIBLE_BBS);
-
     let mut ret_cond = old_cond;
     if MONTECARLO_EXECING.load(Ordering::Relaxed) {
         if let Some(bseq) = BRANCH_POLICY.lock().unwrap().get(&br_id) {
@@ -293,7 +286,6 @@ fn update_branch<T>(br_id: u32, ret_cond: bool, is_sat: bool, args0: T, args1: T
 where
     i128: From<T>,
 {
-    println!("[ DEBUG\tUpdateBranch ]");
     assert!(cond_type > 0);
     let ret_cond_u32: u32 = ret_cond.into();
     let is_sat_u64: u64 = is_sat.into();
@@ -323,8 +315,6 @@ where
 }
 
 fn counting_helper(h: &Hyperrectangle) {
-    println!("[ DEBUG\tCountingHelper ]\tHyperrectangle : {:?}", h);
-
     BRANCH_CMP.lock().unwrap().clear();
 
     for _ in 0..EXECUTION_NUMBER {
@@ -335,11 +325,6 @@ fn counting_helper(h: &Hyperrectangle) {
                     + h.interval[i].low,
             );
         }
-
-        println!(
-            "[ DEBUG\tCountingHelper ]\trunning target with input : {:?}",
-            input
-        );
 
         unsafe {
             LLVMFuzzerTestOneInput(input.as_ptr(), h.size); //TODO try to use libafl wrapper
@@ -374,11 +359,10 @@ fn terminate_search(groups: &[WeightGroup]) -> Option<Hyperrectangle> {
         }
 
         if threshold < (group.weight / cardinality as f64) {
-            println!("[ DEBUG\tTerminateSearch ]\treturning : True");
             return Some(group.h.clone());
         }
     }
-    println!("[ DEBUG\tTerminateSearch ]\treturning : False");
+
     None
 }
 
@@ -440,11 +424,6 @@ fn update_weight_groups(
     z: f64,
     is_left: bool,
 ) {
-    println!(
-        "[ DEBUG\tUpdateWeightGroup ]\tp : {}, z : {}, is_left : {}",
-        p, z, is_left
-    );
-
     for i in 0..(group_index + 1) {
         if is_left {
             groups[i].weight *= (1.0 - p) / z;
@@ -480,24 +459,10 @@ fn noisy_binary_search(p: f64) {
     loop {
         match terminate_search(&groups) {
             None => {
-                println!(
-                    "[ DEBUG\tNoisyBinarySearch ]\tcurrent groups : {:?}",
-                    groups
-                );
                 let mut w_l = 0.0;
                 let group_index = find_group(&groups, &mut w_l);
 
-                println!(
-                    "[ DEBUG\tNoisyBinarySearch ]\tfound group index : {:?}",
-                    group_index
-                );
-
                 create_new_weight_groups(&mut groups, group_index);
-
-                println!(
-                    "[ DEBUG\tNoisyBinarySearch ]\tgroups after split: {:?}",
-                    groups
-                );
 
                 noisy_counting_oracle(&groups[group_index].h, &groups[group_index + 1].h);
 
