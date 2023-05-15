@@ -51,59 +51,60 @@ struct WeightGroup {
 }
 
 #[derive(Copy, Clone, Debug)]
+#[repr(u8)]
 enum Predicate {
     /// 0 0 0 0    Always false (always folded)
-    FcmpFalse = 0,
+    FcmpFalse = 0u8,
     /// 0 0 0 1    True if ordered and equal
-    FcmpOeq = 1,
+    FcmpOeq = 1u8,
     /// 0 0 1 0    True if ordered and greater than
-    FcmpOgt = 2,
+    FcmpOgt = 2u8,
     /// 0 0 1 1    True if ordered and greater than or equal
-    FcmpOge = 3,
+    FcmpOge = 3u8,
     /// 0 1 0 0    True if ordered and less than
-    FcmpOlt = 4,
+    FcmpOlt = 4u8,
     /// 0 1 0 1    True if ordered and less than or equal
-    FcmpOle = 5,
+    FcmpOle = 5u8,
     /// 0 1 1 0    True if ordered and operands are unequal
-    FcmpOne = 6,
+    FcmpOne = 6u8,
     /// 0 1 1 1    True if ordered (no nans)
-    FcmpOrd = 7,
+    FcmpOrd = 7u8,
     /// 1 0 0 0    True if unordered: isnan(X) | isnan(Y)
-    FcmpUno = 8,
+    FcmpUno = 8u8,
     /// 1 0 0 1    True if unordered or equal
-    FcmpUeq = 9,
+    FcmpUeq = 9u8,
     /// 1 0 1 0    True if unordered or greater than
-    FcmpUgt = 10,
+    FcmpUgt = 10u8,
     /// 1 0 1 1    True if unordered, greater than, or equal
-    FcmpUge = 11,
+    FcmpUge = 11u8,
     /// 1 1 0 0    True if unordered or less than
-    FcmpUlt = 12,
+    FcmpUlt = 12u8,
     /// 1 1 0 1    True if unordered, less than, or equal
-    FcmpUle = 13,
+    FcmpUle = 13u8,
     /// 1 1 1 0    True if unordered or not equal
-    FcmpUne = 14,
+    FcmpUne = 14u8,
     /// 1 1 1 1    Always true (always folded)
-    FcmpTrue = 15,
+    FcmpTrue = 15u8,
     /// equal
-    IcmpEq = 32,
+    IcmpEq = 32u8,
     /// not equal
-    IcmpNe = 33,
+    IcmpNe = 33u8,
     /// unsigned greater than
-    IcmpUgt = 34,
+    IcmpUgt = 34u8,
     /// unsigned greater or equal
-    IcmpUge = 35,
+    IcmpUge = 35u8,
     /// unsigned less than
-    IcmpUlt = 36,
+    IcmpUlt = 36u8,
     /// unsigned less or equal
-    IcmpUle = 37,
+    IcmpUle = 37u8,
     /// signed greater than
-    IcmpSgt = 38,
+    IcmpSgt = 38u8,
     /// signed greater or equal
-    IcmpSge = 39,
+    IcmpSge = 39u8,
     /// signed less than
-    IcmpSlt = 40,
+    IcmpSlt = 40u8,
     /// signed less or equal
-    IcmpSle = 41,
+    IcmpSle = 41u8,
 }
 
 // TODO try to remove error prone duplication (enum -> u8 / u8 -> enum)
