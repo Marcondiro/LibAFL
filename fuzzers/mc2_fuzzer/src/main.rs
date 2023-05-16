@@ -328,7 +328,7 @@ fn counting_helper(h: &Hyperrectangle) {
         }
 
         unsafe {
-            LLVMFuzzerTestOneInput(input.as_ptr(), h.size); //TODO try to use libafl wrapper
+            LLVMFuzzerTestOneInput(input.as_ptr(), input.len()); //TODO try to use libafl wrapper
         }
     }
 }
