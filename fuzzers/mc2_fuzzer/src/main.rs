@@ -3,6 +3,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use libafl::{
+    executors::{inprocess::InProcessExecutor, ExitKind},
+    fuzzer::{Fuzzer, StdFuzzer},
+    inputs::{BytesInput, HasBytesVec},
+    state::StdState,
+};
+
 const EXECUTION_NUMBER: usize = 5;
 
 // TODO find a better solution for global stuff
@@ -497,6 +504,14 @@ fn noisy_binary_search(p: f64) {
 }
 
 fn main() {
+
+    let mut harness = |input: &BytesInput| {
+        unsafe {
+            LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
+        }
+        ExitKind::Ok
+    };
+
     BRANCH_POLICY
         .lock()
         .unwrap()
