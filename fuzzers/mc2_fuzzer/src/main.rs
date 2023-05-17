@@ -1,5 +1,7 @@
 use lazy_static::lazy_static;
+use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -57,7 +59,7 @@ struct WeightGroup {
     weight: f64,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, TryFromPrimitive)]
 #[repr(u8)]
 enum Predicate {
     /// 0 0 0 0    Always false (always folded)
@@ -112,41 +114,6 @@ enum Predicate {
     IcmpSlt = 40u8,
     /// signed less or equal
     IcmpSle = 41u8,
-}
-
-// TODO try to remove error prone duplication (enum -> u8 / u8 -> enum)
-impl From<u8> for Predicate {
-    fn from(val: u8) -> Self {
-        match val {
-            0 => Predicate::FcmpFalse,
-            1 => Predicate::FcmpOeq,
-            2 => Predicate::FcmpOgt,
-            3 => Predicate::FcmpOge,
-            4 => Predicate::FcmpOlt,
-            5 => Predicate::FcmpOle,
-            6 => Predicate::FcmpOne,
-            7 => Predicate::FcmpOrd,
-            8 => Predicate::FcmpUno,
-            9 => Predicate::FcmpUeq,
-            10 => Predicate::FcmpUgt,
-            11 => Predicate::FcmpUge,
-            12 => Predicate::FcmpUlt,
-            13 => Predicate::FcmpUle,
-            14 => Predicate::FcmpUne,
-            15 => Predicate::FcmpTrue,
-            32 => Predicate::IcmpEq,
-            33 => Predicate::IcmpNe,
-            34 => Predicate::IcmpUgt,
-            35 => Predicate::IcmpUge,
-            36 => Predicate::IcmpUlt,
-            37 => Predicate::IcmpUle,
-            38 => Predicate::IcmpSgt,
-            39 => Predicate::IcmpSge,
-            40 => Predicate::IcmpSlt,
-            41 => Predicate::IcmpSle,
-            _ => panic!("Invalid Predicate value: {}", val),
-        }
-    }
 }
 
 fn compute_prob(val: &BranchCmp) -> f64 {
@@ -317,7 +284,8 @@ where
             mean: (args0_i - args1_i) as f64,
             count: 1,
             sat: is_sat_u64,
-            typ: cond_type.into(),
+            typ: cond_type.try_into()
+                .expect("Condition type has an invalid u8 value, no discriminant in enum `Predicate` matches"),
             m2: 0.0,
         });
 }
@@ -504,7 +472,6 @@ fn noisy_binary_search(p: f64) {
 }
 
 fn main() {
-
     let mut harness = |input: &BytesInput| {
         unsafe {
             LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
