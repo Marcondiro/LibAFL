@@ -15,8 +15,6 @@ use libafl::{
 const EXECUTION_NUMBER: usize = 5;
 
 // TODO find a better solution for global stuff
-static MONTECARLO_EXECING: AtomicBool = AtomicBool::new(true);
-static TRACING: AtomicBool = AtomicBool::new(true);
 static IS_LEFT: AtomicBool = AtomicBool::new(false);
 
 lazy_static! {
@@ -26,6 +24,11 @@ lazy_static! {
 
 extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
+}
+
+struct Mc2Fuzzer {
+    is_left: bool,
+    branch_policy: HashMap<u32, BranchSequence>,
 }
 
 #[derive(Debug)]
@@ -237,22 +240,19 @@ where
     i128: From<T>,
 {
     let mut ret_cond = old_cond;
-    if MONTECARLO_EXECING.load(Ordering::Relaxed) {
-        if let Some(bseq) = BRANCH_POLICY.lock().unwrap().get(&br_id) {
-            ret_cond = bseq.direction;
-        }
+
+    if let Some(bseq) = BRANCH_POLICY.lock().unwrap().get(&br_id) {
+        ret_cond = bseq.direction;
     }
 
-    if TRACING.load(Ordering::Relaxed) {
-        update_branch(
-            br_id,
-            ret_cond,
-            ret_cond == old_cond,
-            args0,
-            args1,
-            cond_type,
-        )
-    }
+    update_branch(
+        br_id,
+        ret_cond,
+        ret_cond == old_cond,
+        args0,
+        args1,
+        cond_type,
+    );
 
     ret_cond
 }
