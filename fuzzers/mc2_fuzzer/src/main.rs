@@ -5,8 +5,10 @@ use std::convert::TryInto;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+
 use core::{
     fmt::Debug,
+    time::Duration
 };
 
 use libafl::{
@@ -15,15 +17,17 @@ use libafl::{
     inputs::{BytesInput, HasBytesVec},
     state::StdState,
     bolts::rands::StdRand,
+    prelude::{SimpleEventManager, current_time}
 };
 
+use crate::mc2_state::Hyperrectangle;
 mod mc2_state;
 
+
+const STATS_TIMEOUT_DEFAULT: Duration = Duration::from_secs(15);
 const EXECUTION_NUMBER: usize = 5;
 
 // TODO find a better solution for global stuff
-static IS_LEFT: AtomicBool = AtomicBool::new(false);
-
 lazy_static! {
     static ref BRANCH_CMP: Mutex<HashMap<u32, BranchCmp>> = Mutex::new(HashMap::new());
     static ref BRANCH_POLICY: Mutex<HashMap<u32, BranchSequence>> = Mutex::new(HashMap::new());
@@ -39,13 +43,111 @@ struct Mc2Fuzzer {
     p : f64,
 }
 
-imp Mc2Fuzzer {
+impl Mc2Fuzzer {
 
     fn new(p : f64, branch_policy: HashMap<u32, BranchSequence>) -> Self {
-        is_left : false,
-        p : p,
-        branch_policy : branch_policy,
+        Self{
+            is_left : false,
+            p : p,
+            branch_policy : branch_policy,
+        }
     }
+    
+
+    fn fuzz_loop(
+        &mut self,
+        executor: &mut InProcessExecutor,
+        state: &mut mc2_state::Mc2State,
+        manager: &mut SimpleEventManager,
+    ) {
+        // noisy binary search
+
+        let mut last = current_time();
+        let monitor_timeout = STATS_TIMEOUT_DEFAULT;
+
+        let promising_hyperrectangle;
+        loop {
+            match state.terminate_search() {
+                None => {
+                    let (group_index, w_l) = state.find_group();
+    
+                    state.split_group(group_index);
+    
+                    noisy_counting_oracle(state.get_hyperrectangles(group_index), state.get_hyperrectangles(group_index + 1));
+                    
+                    let z = if self.is_left {
+                        (w_l + state.get_weight(group_index)) * (1.0 - self.p) + (1.0 - w_l) * self.p
+                    } else {
+                        (w_l + state.get_weight(group_index)) * self.p + (1.0 - w_l) * (1.0 - self.p)
+                    };
+    
+                    update_weight_groups(
+                        &mut groups,
+                        group_index,
+                        self.p,
+                        z,
+                        IS_LEFT.load(Ordering::Relaxed),
+                    )
+                }
+                Some(ph) => {
+                    promising_hyperrectangle = ph;
+                    break;
+                }
+            }
+            last = manager.maybe_report_progress(state, last, monitor_timeout)?;
+        }
+        
+        // TODO return promising instead of printing
+        println!("--- Most Promising Input Region ----");
+        println!("{:?}", promising_hyperrectangle);
+        println!("--- Obtained groups at the end of execution ----");
+        for wg in groups {
+            println!("{:?}", wg.h);
+        }
+    }
+
+    fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
+        counting_helper(i_l);
+        let mut i_l_count = 1.0;
+        for val in BRANCH_CMP.lock().unwrap().values() {
+            let tmp_count = compute_prob(val);
+            if i_l_count > tmp_count {
+                i_l_count = tmp_count;
+            }
+        }
+    
+        counting_helper(i_r);
+        let mut i_r_count = 1.0;
+        for val in BRANCH_CMP.lock().unwrap().values() {
+            let tmp_count = compute_prob(val);
+            if i_r_count > tmp_count {
+                i_r_count = tmp_count;
+            }
+        }
+    
+        self.is_left = i_l_count >= i_r_count;
+    }
+
+
+    fn counting_helper(h: &Hyperrectangle, executor : &mut InProcessExecutor,state: &mut mc2_state::Mc2State, manager: &mut SimpleEventManager,) {
+        BRANCH_CMP.lock().unwrap().clear();
+
+        for _ in 0..EXECUTION_NUMBER {
+            let mut tmp_input = Vec::new();
+            for i in 0..h.size {
+                tmp_input.push(
+                    // TODO use libafl rand
+                    rand::random::<u8>() % (h.interval[i].high - h.interval[i].low + 1)
+                        + h.interval[i].low,
+                );
+            }
+            
+        let input = BytesInput::new(tmp_input);
+        executor.run_target(&mut self, state, manager, input );
+
+    }
+}
+    
 
 }
 
@@ -293,39 +395,6 @@ where
         });
 }
 
-fn counting_helper(h: &Hyperrectangle) {
-    BRANCH_CMP.lock().unwrap().clear();
-
-    for _ in 0..EXECUTION_NUMBER {
-        let mut input = Vec::new();
-        for i in 0..h.size {
-            input.push(
-                rand::random::<u8>() % (h.interval[i].high - h.interval[i].low + 1)
-                    + h.interval[i].low,
-            );
-        }
-
-        unsafe {
-            LLVMFuzzerTestOneInput(input.as_ptr(), input.len()); //TODO try to use libafl wrapper
-        }
-    }
-}
-
-fn find_group(groups: &Vec<WeightGroup>, w_l: &mut f64) -> usize {
-    let mut cumulative_weight: f64 = 0.0;
-    let mut group_index: usize = 0;
-
-    for (i, group) in groups.iter().enumerate() {
-        cumulative_weight += group.weight;
-        if cumulative_weight > 0.5 {
-            group_index = i;
-            break;
-        }
-    }
-
-    *w_l = cumulative_weight - groups[group_index].weight;
-    group_index
-}
 
 fn terminate_search(groups: &[WeightGroup]) -> Option<Hyperrectangle> {
     let threshold = 1.0 / f64::sqrt(groups[0].h.size as f64 * 8.0);
@@ -374,27 +443,6 @@ fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
     groups[group_index + 1].h.interval[dim].low = m + 1;
 }
 
-fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
-    counting_helper(i_l);
-    let mut i_l_count = 1.0;
-    for val in BRANCH_CMP.lock().unwrap().values() {
-        let tmp_count = compute_prob(val);
-        if i_l_count > tmp_count {
-            i_l_count = tmp_count;
-        }
-    }
-
-    counting_helper(i_r);
-    let mut i_r_count = 1.0;
-    for val in BRANCH_CMP.lock().unwrap().values() {
-        let tmp_count = compute_prob(val);
-        if i_r_count > tmp_count {
-            i_r_count = tmp_count;
-        }
-    }
-
-    IS_LEFT.store(i_l_count >= i_r_count, Ordering::Relaxed);
-}
 
 fn update_weight_groups(
     groups: &mut [WeightGroup],
@@ -420,59 +468,6 @@ fn update_weight_groups(
     }
 }
 
-fn noisy_binary_search(p: f64) {
-    let mut groups = Vec::new();
-
-    let size = 1; // let's start from 1 byte size!
-    let hyperrectangle = Hyperrectangle {
-        size,
-        interval: vec![Interval { low: 0, high: 255 }; size as usize],
-    };
-
-    groups.push(WeightGroup {
-        h: hyperrectangle,
-        weight: 1.0,
-    });
-
-    let promising_hyperrectangle;
-    loop {
-        match terminate_search(&groups) {
-            None => {
-                let mut w_l = 0.0;
-                let group_index = find_group(&groups, &mut w_l);
-
-                create_new_weight_groups(&mut groups, group_index);
-
-                noisy_counting_oracle(&groups[group_index].h, &groups[group_index + 1].h);
-
-                let z = if IS_LEFT.load(Ordering::Relaxed) {
-                    (w_l + groups[group_index].weight) * (1.0 - p) + (1.0 - w_l) * p
-                } else {
-                    (w_l + groups[group_index].weight) * p + (1.0 - w_l) * (1.0 - p)
-                };
-
-                update_weight_groups(
-                    &mut groups,
-                    group_index,
-                    p,
-                    z,
-                    IS_LEFT.load(Ordering::Relaxed),
-                )
-            }
-            Some(ph) => {
-                promising_hyperrectangle = ph;
-                break;
-            }
-        }
-    }
-
-    println!("--- Most Promising Input Region ----");
-    println!("{:?}", promising_hyperrectangle);
-    println!("--- Obtained groups at the end of execution ----");
-    for wg in groups {
-        println!("{:?}", wg.h);
-    }
-}
 
 fn main() {
     let mut harness = |input: &BytesInput| {
@@ -486,6 +481,21 @@ fn main() {
         StdRand::with_seed(42),
         1, // input size
     );
+
+    // TODO support tui as in BabyFuzzer ?
+    let mon = SimpleMonitor::new(|s| println!("{s}"));
+    let mut mgr = SimpleEventManager::new(mon);
+
+    // TODO fuzzer
+
+    let mut executor = InProcessExecutor::new(
+        &mut harness,
+        (),
+        &mut fuzzer,
+        &mut state,
+        &mut mgr,
+    )
+    .expect("Failed to create the Executor");
 
     BRANCH_POLICY
         .lock()
