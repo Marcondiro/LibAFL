@@ -13,6 +13,8 @@ libafl_targets = { path = "../../libafl_targets/", features = ["sancov_pcguard_e
 lazy_static = "1.4"
 rand = "0.8"
 num_enum = "0.6"
+serde = { version = "1.0", default-features = false, features = ["alloc", "derive"] } # serialization lib
+
 
 [build-dependencies]
 cc = { version = "1.0", features = ["parallel"] }

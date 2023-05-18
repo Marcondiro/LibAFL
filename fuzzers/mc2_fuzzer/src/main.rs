@@ -5,12 +5,19 @@ use std::convert::TryInto;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
+use core::{
+    fmt::Debug,
+};
+
 use libafl::{
     executors::{inprocess::InProcessExecutor, ExitKind},
     fuzzer::{Fuzzer, StdFuzzer},
     inputs::{BytesInput, HasBytesVec},
     state::StdState,
+    bolts::rands::StdRand,
 };
+
+mod mc2_state;
 
 const EXECUTION_NUMBER: usize = 5;
 
@@ -29,7 +36,19 @@ extern "C" {
 struct Mc2Fuzzer {
     is_left: bool,
     branch_policy: HashMap<u32, BranchSequence>,
+    p : f64,
 }
+
+imp Mc2Fuzzer {
+
+    fn new(p : f64, branch_policy: HashMap<u32, BranchSequence>) -> Self {
+        is_left : false,
+        p : p,
+        branch_policy : branch_policy,
+    }
+
+}
+
 
 #[derive(Debug)]
 struct BranchCmp {
@@ -40,27 +59,11 @@ struct BranchCmp {
     typ: Predicate,
 }
 
-#[derive(Copy, Clone, Debug)]
-struct Interval {
-    low: u8,
-    high: u8,
-}
-
-#[derive(Clone, Debug)]
-struct Hyperrectangle {
-    size: usize,
-    interval: Vec<Interval>,
-}
 
 struct BranchSequence {
     direction: bool,
 }
 
-#[derive(Debug)]
-struct WeightGroup {
-    h: Hyperrectangle,
-    weight: f64,
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, TryFromPrimitive)]
 #[repr(u8)]
@@ -478,6 +481,11 @@ fn main() {
         }
         ExitKind::Ok
     };
+
+    let mut state = mc2_state::Mc2State::new(
+        StdRand::with_seed(42),
+        1, // input size
+    );
 
     BRANCH_POLICY
         .lock()
