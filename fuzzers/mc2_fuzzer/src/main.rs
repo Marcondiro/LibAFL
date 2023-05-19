@@ -2,27 +2,21 @@ use lazy_static::lazy_static;
 use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
-
-use core::{
-    fmt::Debug,
-    time::Duration
-};
+use core::{fmt::Debug, time::Duration};
 
 use libafl::{
-    executors::{inprocess::InProcessExecutor, ExitKind},
-    fuzzer::{Fuzzer, StdFuzzer},
-    inputs::{BytesInput, HasBytesVec},
-    state::StdState,
     bolts::rands::StdRand,
-    prelude::{SimpleEventManager, current_time}
+    executors::{inprocess::InProcessExecutor, ExitKind},
+    fuzzer::Fuzzer,
+    inputs::{BytesInput, HasBytesVec},
+    prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput},
 };
 
-use crate::mc2_state::Hyperrectangle;
 mod mc2_state;
 
+use crate::mc2_state::{Hyperrectangle, Mc2State};
 
 const STATS_TIMEOUT_DEFAULT: Duration = Duration::from_secs(15);
 const EXECUTION_NUMBER: usize = 5;
@@ -40,26 +34,26 @@ extern "C" {
 struct Mc2Fuzzer {
     is_left: bool,
     branch_policy: HashMap<u32, BranchSequence>,
-    p : f64,
+    p: f64,
 }
 
 impl Mc2Fuzzer {
-
-    fn new(p : f64, branch_policy: HashMap<u32, BranchSequence>) -> Self {
-        Self{
-            is_left : false,
-            p : p,
-            branch_policy : branch_policy,
+    pub fn new(p: f64, branch_policy: HashMap<u32, BranchSequence>) -> Self {
+        Self {
+            is_left: false,
+            p,
+            branch_policy,
         }
     }
-    
 
-    fn fuzz_loop(
+    fn fuzz_loop<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, R, MT>(
         &mut self,
-        executor: &mut InProcessExecutor,
-        state: &mut mc2_state::Mc2State,
-        manager: &mut SimpleEventManager,
-    ) {
+        executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
+        state: &mut Mc2State<R>,
+        manager: &mut SimpleEventManager<MT, Mc2State<R>>,
+    ) where
+        H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+    {
         // noisy binary search
 
         let mut last = current_time();
@@ -70,24 +64,23 @@ impl Mc2Fuzzer {
             match state.terminate_search() {
                 None => {
                     let (group_index, w_l) = state.find_group();
-    
+
                     state.split_group(group_index);
-    
-                    noisy_counting_oracle(state.get_hyperrectangles(group_index), state.get_hyperrectangles(group_index + 1));
-                    
+
+                    self.noisy_counting_oracle(
+                        state.get_hyperrectangles(group_index),
+                        state.get_hyperrectangles(group_index + 1),
+                    );
+
                     let z = if self.is_left {
-                        (w_l + state.get_weight(group_index)) * (1.0 - self.p) + (1.0 - w_l) * self.p
+                        (w_l + state.get_weight(group_index)) * (1.0 - self.p)
+                            + (1.0 - w_l) * self.p
                     } else {
-                        (w_l + state.get_weight(group_index)) * self.p + (1.0 - w_l) * (1.0 - self.p)
+                        (w_l + state.get_weight(group_index)) * self.p
+                            + (1.0 - w_l) * (1.0 - self.p)
                     };
-    
-                    update_weight_groups(
-                        &mut groups,
-                        group_index,
-                        self.p,
-                        z,
-                        IS_LEFT.load(Ordering::Relaxed),
-                    )
+
+                    state.update_weights(group_index, self.p, z, self.is_left);
                 }
                 Some(ph) => {
                     promising_hyperrectangle = ph;
@@ -96,18 +89,18 @@ impl Mc2Fuzzer {
             }
             last = manager.maybe_report_progress(state, last, monitor_timeout)?;
         }
-        
+
         // TODO return promising instead of printing
         println!("--- Most Promising Input Region ----");
         println!("{:?}", promising_hyperrectangle);
-        println!("--- Obtained groups at the end of execution ----");
-        for wg in groups {
-            println!("{:?}", wg.h);
-        }
+        // println!("--- Obtained groups at the end of execution ----");
+        // for wg in groups {
+        //     println!("{:?}", wg.h);
+        // }
     }
 
-    fn noisy_counting_oracle(i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
-        counting_helper(i_l);
+    fn noisy_counting_oracle(&mut self, i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
+        self.counting_helper(i_l);
         let mut i_l_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = compute_prob(val);
@@ -115,8 +108,8 @@ impl Mc2Fuzzer {
                 i_l_count = tmp_count;
             }
         }
-    
-        counting_helper(i_r);
+
+        self.counting_helper(i_r);
         let mut i_r_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = compute_prob(val);
@@ -124,12 +117,19 @@ impl Mc2Fuzzer {
                 i_r_count = tmp_count;
             }
         }
-    
+
         self.is_left = i_l_count >= i_r_count;
     }
 
-
-    fn counting_helper(h: &Hyperrectangle, executor : &mut InProcessExecutor,state: &mut mc2_state::Mc2State, manager: &mut SimpleEventManager,) {
+    fn counting_helper<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, R, MT>(
+        &mut self,
+        h: &Hyperrectangle,
+        executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
+        state: &mut mc2_state::Mc2State<R>,
+        manager: &mut SimpleEventManager<MT, Mc2State<R>>,
+    ) where
+        H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+    {
         BRANCH_CMP.lock().unwrap().clear();
 
         for _ in 0..EXECUTION_NUMBER {
@@ -141,16 +141,12 @@ impl Mc2Fuzzer {
                         + h.interval[i].low,
                 );
             }
-            
-        let input = BytesInput::new(tmp_input);
-        executor.run_target(&mut self, state, manager, input );
 
+            let input = BytesInput::new(tmp_input);
+            executor.run_target(&mut self, state, manager, input);
+        }
     }
 }
-    
-
-}
-
 
 #[derive(Debug)]
 struct BranchCmp {
@@ -161,11 +157,9 @@ struct BranchCmp {
     typ: Predicate,
 }
 
-
 struct BranchSequence {
     direction: bool,
 }
-
 
 #[derive(Copy, Clone, Debug, PartialEq, TryFromPrimitive)]
 #[repr(u8)]
@@ -395,80 +389,6 @@ where
         });
 }
 
-
-fn terminate_search(groups: &[WeightGroup]) -> Option<Hyperrectangle> {
-    let threshold = 1.0 / f64::sqrt(groups[0].h.size as f64 * 8.0);
-
-    for group in groups {
-        let mut cardinality: u64 = 1;
-        for j in 0..group.h.size {
-            let interval = group.h.interval[j];
-            cardinality *= (interval.high - interval.low) as u64 + 1;
-        }
-
-        if threshold < (group.weight / cardinality as f64) {
-            return Some(group.h.clone());
-        }
-    }
-
-    None
-}
-
-fn create_new_weight_groups(groups: &mut Vec<WeightGroup>, group_index: usize) {
-    let hyperrectangle = Hyperrectangle {
-        size: groups[group_index].h.size,
-        interval: groups[group_index].h.interval.clone(),
-    };
-
-    let mut dim = 0;
-    // TODO fix this to avoid dim == size
-    while dim < groups[group_index].h.size
-        && groups[group_index].h.interval[dim].high == groups[group_index].h.interval[dim].low
-    {
-        dim += 1;
-    }
-
-    groups.insert(
-        group_index,
-        WeightGroup {
-            h: hyperrectangle,
-            weight: groups[group_index].weight,
-        },
-    );
-
-    let m = ((groups[group_index].h.interval[dim].high as u16
-        + groups[group_index].h.interval[dim].low as u16)
-        / 2) as u8;
-    groups[group_index].h.interval[dim].high = m;
-    groups[group_index + 1].h.interval[dim].low = m + 1;
-}
-
-
-fn update_weight_groups(
-    groups: &mut [WeightGroup],
-    group_index: usize,
-    p: f64,
-    z: f64,
-    is_left: bool,
-) {
-    for i in 0..(group_index + 1) {
-        if is_left {
-            groups[i].weight *= (1.0 - p) / z;
-        } else {
-            groups[i].weight *= p / z;
-        }
-    }
-
-    for i in (group_index + 1)..groups.len() {
-        if is_left {
-            groups[i].weight *= p / z;
-        } else {
-            groups[i].weight *= (1.0 - p) / z;
-        }
-    }
-}
-
-
 fn main() {
     let mut harness = |input: &BytesInput| {
         unsafe {
@@ -477,31 +397,23 @@ fn main() {
         ExitKind::Ok
     };
 
-    let mut state = mc2_state::Mc2State::new(
-        StdRand::with_seed(42),
-        1, // input size
-    );
+    let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
 
     // TODO support tui as in BabyFuzzer ?
     let mon = SimpleMonitor::new(|s| println!("{s}"));
     let mut mgr = SimpleEventManager::new(mon);
 
     // TODO fuzzer
+    let fuzzer = Mc2Fuzzer::new();
 
-    let mut executor = InProcessExecutor::new(
-        &mut harness,
-        (),
-        &mut fuzzer,
-        &mut state,
-        &mut mgr,
-    )
-    .expect("Failed to create the Executor");
+    let mut executor = InProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
+        .expect("Failed to create the Executor");
 
-    BRANCH_POLICY
-        .lock()
-        .unwrap()
-        .entry(0)
-        .or_insert(BranchSequence { direction: false });
-
-    noisy_binary_search(0.01);
+    // BRANCH_POLICY
+    //     .lock()
+    //     .unwrap()
+    //     .entry(0)
+    //     .or_insert(BranchSequence { direction: false });
+    //
+    // noisy_binary_search(0.01);
 }
