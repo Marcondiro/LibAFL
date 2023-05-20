@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use core::{fmt::Debug, time::Duration};
 
 use libafl::{
-    bolts::rands::StdRand,
+    bolts::rands::{StdRand,Rand},
     executors::{inprocess::InProcessExecutor, ExitKind},
     fuzzer::Fuzzer,
     inputs::{BytesInput, HasBytesVec},
@@ -52,6 +52,7 @@ impl Mc2Fuzzer {
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
+        R : Rand,
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
     {
         // noisy binary search
@@ -87,7 +88,7 @@ impl Mc2Fuzzer {
                     break;
                 }
             }
-            last = manager.maybe_report_progress(state, last, monitor_timeout)?;
+            // last = manager.maybe_report_progress(state, last, monitor_timeout)?;
         }
 
         // TODO return promising instead of printing
@@ -99,8 +100,15 @@ impl Mc2Fuzzer {
         // }
     }
 
-    fn noisy_counting_oracle(&mut self, i_l: &Hyperrectangle, i_r: &Hyperrectangle) {
-        self.counting_helper(i_l);
+    fn noisy_counting_oracle<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, R, MT>(
+        &mut self, 
+        i_l: &Hyperrectangle,
+        i_r: &Hyperrectangle,
+        executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
+        state: &mut mc2_state::Mc2State<R>,
+        manager: &mut SimpleEventManager<MT, Mc2State<R>>,
+        ) {
+        self.counting_helper(i_l,executor,state,manager);
         let mut i_l_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = compute_prob(val);
@@ -109,7 +117,7 @@ impl Mc2Fuzzer {
             }
         }
 
-        self.counting_helper(i_r);
+        self.counting_helper(i_r,executor,state,manager);
         let mut i_r_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = compute_prob(val);
