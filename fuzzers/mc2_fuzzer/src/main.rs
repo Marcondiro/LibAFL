@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use core::{fmt::Debug, time::Duration};
 
 use libafl::{
-    bolts::rands::{StdRand,Rand},
+    bolts::rands::{Rand, StdRand},
     executors::{inprocess::InProcessExecutor, ExitKind},
     fuzzer::Fuzzer,
     inputs::{BytesInput, HasBytesVec},
@@ -52,7 +52,7 @@ impl Mc2Fuzzer {
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
-        R : Rand,
+        R: Rand,
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
     {
         // noisy binary search
@@ -71,6 +71,9 @@ impl Mc2Fuzzer {
                     self.noisy_counting_oracle(
                         state.get_hyperrectangles(group_index),
                         state.get_hyperrectangles(group_index + 1),
+                        executor,
+                        state,
+                        manager,
                     );
 
                     let z = if self.is_left {
@@ -100,15 +103,18 @@ impl Mc2Fuzzer {
         // }
     }
 
-    fn noisy_counting_oracle<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, R, MT>(
-        &mut self, 
+    fn noisy_counting_oracle<H, OT, R, MT>(
+        &mut self,
         i_l: &Hyperrectangle,
         i_r: &Hyperrectangle,
         executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut mc2_state::Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
-        ) {
-        self.counting_helper(i_l,executor,state,manager);
+    ) where
+        H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+        OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>,
+    {
+        self.counting_helper(i_l, executor, state, manager);
         let mut i_l_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = compute_prob(val);
@@ -117,7 +123,7 @@ impl Mc2Fuzzer {
             }
         }
 
-        self.counting_helper(i_r,executor,state,manager);
+        self.counting_helper(i_r, executor, state, manager);
         let mut i_r_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = compute_prob(val);
@@ -142,7 +148,7 @@ impl Mc2Fuzzer {
 
         for _ in 0..EXECUTION_NUMBER {
             let mut tmp_input = Vec::new();
-            for i in 0..h.size {
+            for i in 0..h.interval.len() {
                 tmp_input.push(
                     // TODO use libafl rand
                     rand::random::<u8>() % (h.interval[i].high - h.interval[i].low + 1)

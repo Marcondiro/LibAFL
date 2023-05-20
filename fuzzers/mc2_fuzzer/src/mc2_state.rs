@@ -8,15 +8,15 @@ use libafl::{
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
-struct Interval {
-    low: u8,
-    high: u8,
+pub struct Interval {
+    pub low: u8,
+    pub high: u8,
 }
 
 // TODO replace this struct with vec of intervals in WeightGroup
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hyperrectangle {
-    interval: Vec<Interval>,
+    pub interval: Vec<Interval>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
