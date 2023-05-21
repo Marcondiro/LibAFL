@@ -53,6 +53,8 @@ impl<R> UsesInput for Mc2State<R> {
     type Input = BytesInput;
 }
 
+// TODO GenericInProcessExecutor requires the implementation of trait HasCorpus in the state, should we add it?
+
 impl<R> Mc2State<R>
 where
     R: Rand,

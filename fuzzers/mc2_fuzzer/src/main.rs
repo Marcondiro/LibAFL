@@ -8,7 +8,7 @@ use core::{fmt::Debug, time::Duration};
 
 use libafl::{
     bolts::rands::{Rand, StdRand},
-    executors::{inprocess::InProcessExecutor, ExitKind},
+    executors::{inprocess::InProcessExecutor, Executor, ExitKind},
     fuzzer::Fuzzer,
     inputs::{BytesInput, HasBytesVec},
     prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput},
@@ -157,7 +157,8 @@ impl Mc2Fuzzer {
             }
 
             let input = BytesInput::new(tmp_input);
-            executor.run_target(&mut self, state, manager, input);
+            //TODO Should we use the manager and manager.process(self, state, executor)?; ?
+            executor.run_target(&mut self, state, manager, &input);
         }
     }
 }
@@ -404,6 +405,11 @@ where
 }
 
 fn main() {
+    BRANCH_POLICY
+        .lock()
+        .unwrap()
+        .insert(0, BranchSequence { direction: false });
+
     let mut harness = |input: &BytesInput| {
         unsafe {
             LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
@@ -417,17 +423,10 @@ fn main() {
     let mon = SimpleMonitor::new(|s| println!("{s}"));
     let mut mgr = SimpleEventManager::new(mon);
 
-    // TODO fuzzer
-    let fuzzer = Mc2Fuzzer::new();
+    let fuzzer = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
 
     let mut executor = InProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
         .expect("Failed to create the Executor");
 
-    // BRANCH_POLICY
-    //     .lock()
-    //     .unwrap()
-    //     .entry(0)
-    //     .or_insert(BranchSequence { direction: false });
-    //
     // noisy_binary_search(0.01);
 }
