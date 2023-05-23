@@ -1,31 +1,21 @@
-use core::{
-    marker::PhantomData,
-};
-
+use core::fmt;
+use core::marker::PhantomData;
 
 use libafl::{
     executors::{Executor, ExitKind, HasObservers},
     feedbacks::Feedback,
     inputs::Input,
     observers::ObserversTuple,
-    Error,
-    HasObjective,
-    prelude::{
-        UsesState,
-        UsesInput,
-        EventRestarter,
-        EventFirer
-    }
+    prelude::{EventFirer, EventRestarter, UsesInput, UsesState},
+    Error, HasObjective,
 };
-
-
 
 /// The inmem executor simply calls a target function, then returns afterwards.
 pub struct DummyInProcessExecutor<'a, H, I, OT, S>
 where
     H: FnMut(&I) -> ExitKind,
     I: Input,
-    S : UsesInput,
+    S: UsesInput,
     OT: ObserversTuple<S>,
 {
     /// The harness function, being executed for each fuzzing loop execution
@@ -43,7 +33,6 @@ where
 {
     type State = S;
 }
-
 
 impl<'a, EM, H, I, OT, S, Z> Executor<EM, Z> for DummyInProcessExecutor<'a, H, I, OT, S>
 where
@@ -121,5 +110,12 @@ where
     #[inline]
     pub fn harness_mut(&mut self) -> &mut H {
         self.harness_fn
+    }
+
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DummyInProcessExecutor")
+            .field("harness_fn", &"<fn>")
+            .field("observers", &self.observers)
+            .finish_non_exhaustive()
     }
 }

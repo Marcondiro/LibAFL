@@ -17,7 +17,7 @@ use libafl::{
 mod dummy_in_process_executor;
 mod mc2_state;
 
-use crate::fake_in_process_executor::DummyInProcessExecutor;
+use crate::dummy_in_process_executor::DummyInProcessExecutor;
 use crate::mc2_state::{Hyperrectangle, Mc2State};
 
 const STATS_TIMEOUT_DEFAULT: Duration = Duration::from_secs(15);
