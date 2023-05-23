@@ -14,7 +14,7 @@ use libafl::{
     prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput},
 };
 
-mod fake_in_process_executor;
+mod dummy_in_process_executor;
 mod mc2_state;
 
 use crate::fake_in_process_executor::DummyInProcessExecutor;
@@ -428,8 +428,9 @@ fn main() {
 
     let fuzzer = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
 
-    let mut executor = DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
-        .expect("Failed to create the Executor");
+    let mut executor =
+        DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
+            .expect("Failed to create the Executor");
 
     // noisy_binary_search(0.01);
 }
