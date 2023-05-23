@@ -40,6 +40,7 @@ pub struct Mc2State<R> {
     weighted_groups: Vec<WeightGroup>,
     // Number of bytes of the input
     input_size: usize,
+    // TODO add metadate & named_metadata
 }
 
 impl<R> State for Mc2State<R>

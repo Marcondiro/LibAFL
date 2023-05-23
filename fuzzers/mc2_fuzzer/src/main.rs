@@ -14,8 +14,10 @@ use libafl::{
     prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput},
 };
 
+mod fake_in_process_executor;
 mod mc2_state;
 
+use crate::fake_in_process_executor::DummyInProcessExecutor;
 use crate::mc2_state::{Hyperrectangle, Mc2State};
 
 const STATS_TIMEOUT_DEFAULT: Duration = Duration::from_secs(15);
@@ -158,7 +160,8 @@ impl Mc2Fuzzer {
 
             let input = BytesInput::new(tmp_input);
             //TODO Should we use the manager and manager.process(self, state, executor)?; ?
-            executor.run_target(&mut self, state, manager, &input);
+            // fuzzer.execute_input
+            // executor.run_target(&mut self, state, manager, &input);
         }
     }
 }
@@ -425,7 +428,7 @@ fn main() {
 
     let fuzzer = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
 
-    let mut executor = InProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
+    let mut executor = DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
         .expect("Failed to create the Executor");
 
     // noisy_binary_search(0.01);
