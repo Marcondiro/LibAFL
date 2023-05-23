@@ -1,5 +1,6 @@
 use core::fmt;
 use core::marker::PhantomData;
+use std::fmt::Debug;
 
 use libafl::{
     executors::{Executor, ExitKind, HasObservers},
@@ -111,7 +112,9 @@ where
     pub fn harness_mut(&mut self) -> &mut H {
         self.harness_fn
     }
+}
 
+impl<'a, H, I, OT, S> Debug for DummyInProcessExecutor<'a, H, I, OT, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DummyInProcessExecutor")
             .field("harness_fn", &"<fn>")

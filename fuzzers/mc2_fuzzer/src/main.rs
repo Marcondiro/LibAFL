@@ -152,8 +152,7 @@ impl Mc2Fuzzer {
             let mut tmp_input = Vec::new();
             for i in 0..h.interval.len() {
                 tmp_input.push(
-                    // TODO use libafl rand
-                    rand::random::<u8>() % (h.interval[i].high - h.interval[i].low + 1)
+                    state.get_rand_byte() % (h.interval[i].high - h.interval[i].low + 1)
                         + h.interval[i].low,
                 );
             }

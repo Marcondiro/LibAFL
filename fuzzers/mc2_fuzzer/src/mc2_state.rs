@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use libafl::{
     bolts::rands::Rand,
     inputs::BytesInput,
+    monitors::ClientPerfMonitor,
     prelude::{State, UsesInput},
+    state::HasClientPerfMonitor,
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
@@ -174,5 +176,20 @@ where
                 self.weighted_groups[i].weight *= (1.0 - p) / z;
             }
         }
+    }
+
+    pub fn get_rand_byte(&self) -> u8 {
+        self.rand.next() as u8
+    }
+}
+
+#[cfg(not(feature = "introspection"))]
+impl<R> HasClientPerfMonitor for Mc2State<R> {
+    fn introspection_monitor(&self) -> &ClientPerfMonitor {
+        unimplemented!()
+    }
+
+    fn introspection_monitor_mut(&mut self) -> &mut ClientPerfMonitor {
+        unimplemented!()
     }
 }
