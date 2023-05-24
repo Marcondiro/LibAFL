@@ -115,6 +115,7 @@ impl Mc2Fuzzer {
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
         OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>,
+        R : Rand,
     {
         self.counting_helper(i_l, executor, state, manager);
         let mut i_l_count = 1.0;
@@ -145,6 +146,7 @@ impl Mc2Fuzzer {
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+        R : Rand,
     {
         BRANCH_CMP.lock().unwrap().clear();
 
@@ -164,7 +166,7 @@ impl Mc2Fuzzer {
         }
     }
 
-    fn compute_prob(val: &BranchCmp) -> f64 {
+    fn compute_prob(&mut self, val: &BranchCmp) -> f64 {
         if val.sat > 0 {
             return val.sat as f64 / val.count as f64;
         }
@@ -226,6 +228,7 @@ struct BranchCmp {
     typ: Predicate,
 }
 
+#[derive(Clone)]
 struct BranchSequence {
     direction: bool,
 }

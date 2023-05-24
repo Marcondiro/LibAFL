@@ -54,7 +54,6 @@ where
     type State = S;
 }
 
-
 impl<H, HB, OT, S> UsesObservers for DummyInProcessExecutor<H, HB, OT, S>
 where
     H: ?Sized + FnMut(&S::Input) -> ExitKind,
@@ -74,7 +73,6 @@ where
     S: UsesInput,
     Z: UsesState<State = S>,
 {
-
     fn run_target(
         &mut self,
         fuzzer: &mut Z,
@@ -109,7 +107,7 @@ where
     H: FnMut(&<S as UsesInput>::Input) -> ExitKind + ?Sized,
     HB: BorrowMut<H>,
     OT: ObserversTuple<S>,
-    S : UsesState + HasClientPerfMonitor,
+    S: UsesState + HasClientPerfMonitor,
 {
     /// Create a new in mem executor.
     /// Caution: crash and restart in one of them will lead to odd behavior if multiple are used,
@@ -148,5 +146,4 @@ where
     pub fn harness_mut(&mut self) -> &mut H {
         self.harness_fn.borrow_mut()
     }
-
 }

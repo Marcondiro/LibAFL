@@ -42,7 +42,7 @@ pub struct Mc2State<R> {
     weighted_groups: Vec<WeightGroup>,
     // Number of bytes of the input
     input_size: usize,
-    // TODO add metadate & named_metadata
+    // TODO add metadata & named_metadata
 }
 
 impl<R> State for Mc2State<R>
@@ -178,7 +178,7 @@ where
         }
     }
 
-    pub fn get_rand_byte(&self) -> u8 {
+    pub fn get_rand_byte(&self )  -> u8 {
         self.rand.next() as u8
     }
 }
