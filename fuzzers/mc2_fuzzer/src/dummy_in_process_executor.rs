@@ -5,12 +5,14 @@ use core::{
 };
 
 use libafl::{
+    events::{EventFirer, EventRestarter},
     executors::{Executor, ExitKind, HasObservers},
     feedbacks::Feedback,
+    fuzzer::HasObjective,
+    inputs::UsesInput,
     observers::{ObserversTuple, UsesObservers},
-    prelude::{EventFirer, EventRestarter, UsesInput, UsesState},
-    state::HasClientPerfMonitor,
-    Error, HasObjective,
+    state::{HasClientPerfMonitor, UsesState},
+    Error,
 };
 
 /// The inmem executor simply calls a target function, then returns afterwards.
@@ -107,7 +109,7 @@ where
     H: FnMut(&<S as UsesInput>::Input) -> ExitKind + ?Sized,
     HB: BorrowMut<H>,
     OT: ObserversTuple<S>,
-    S: UsesState + HasClientPerfMonitor,
+    S: HasClientPerfMonitor,
 {
     /// Create a new in mem executor.
     /// Caution: crash and restart in one of them will lead to odd behavior if multiple are used,
