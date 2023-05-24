@@ -11,7 +11,7 @@ use crate::{
     fuzzer::Evaluator,
     inputs::Input,
     mark_feature_time,
-    mutators::Mutator,
+    mutators::{MutationResult, Mutator},
     stages::Stage,
     start_timer,
     state::{HasClientPerfMonitor, HasCorpus, HasRand, UsesState},
@@ -64,16 +64,18 @@ where
 impl<I, S> MutatedTransform<I, S> for I
 where
     I: Input + Clone,
+    S: HasCorpus<Input = I>,
 {
     type Post = ();
 
     #[inline]
     fn try_transform_from(
         base: &mut Testcase<I>,
-        _state: &S,
+        state: &S,
         _corpus_idx: CorpusId,
     ) -> Result<Self, Error> {
-        Ok(base.load_input()?.clone())
+        state.corpus().load_input_into(base)?;
+        Ok(base.input().as_ref().unwrap().clone())
     }
 
     #[inline]
@@ -125,8 +127,12 @@ where
             let mut input = input.clone();
 
             start_timer!(state);
-            self.mutator_mut().mutate(state, &mut input, i as i32)?;
+            let mutated = self.mutator_mut().mutate(state, &mut input, i as i32)?;
             mark_feature_time!(state, PerfFeature::Mutate);
+
+            if mutated == MutationResult::Skipped {
+                continue;
+            }
 
             // Time is measured directly the `evaluate_input` function
             let (untransformed, post) = input.try_transform_into(state)?;

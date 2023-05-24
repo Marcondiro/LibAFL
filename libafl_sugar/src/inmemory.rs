@@ -137,7 +137,7 @@ where
 
         let shmem_provider = StdShMemProvider::new().expect("Failed to init shared memory");
 
-        let monitor = MultiMonitor::new(|s| log::info!("{s}"));
+        let monitor = MultiMonitor::new(|s| println!("{s}"));
 
         let mut run_client = |state: Option<_>,
                               mut mgr: LlmpRestartingEventManager<_, _>,
@@ -365,6 +365,7 @@ pub mod pybind {
     /// In-Memory fuzzing made easy.
     /// Use this sugar for scaling `libfuzzer`-style fuzzers.
     #[pyclass(unsendable)]
+    #[derive(Debug)]
     struct InMemoryBytesCoverageSugar {
         input_dirs: Vec<PathBuf>,
         output_dir: PathBuf,

@@ -10,6 +10,7 @@ LibAFL is written and maintained by
  * [Dominik Maier](https://twitter.com/domenuk) <dominik@aflplus.plus>
  * [s1341](https://twitter.com/srubenst1341) <github@shmarya.net>
  * [Dongjia Zhang](https://github.com/tokatoka) <toka@aflplus.plus>
+ * [Addison Crump](https://github.com/addisoncrump) <me@addisoncrump.info>
 
 ## Why LibAFL?
 
@@ -71,7 +72,7 @@ cargo build --release
 cargo doc
 ```
 
-5. Browse the LibAFL book (WIP!) with (requires [mdbook](https://github.com/rust-lang/mdBook))
+5. Browse the LibAFL book (WIP!) with (requires [mdbook](https://rust-lang.github.io/mdBook/index.html))
 
 ```
 cd docs && mdbook serve

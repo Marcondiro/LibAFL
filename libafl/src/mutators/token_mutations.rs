@@ -46,9 +46,7 @@ impl Tokens {
     /// Creates a new tokens metadata (old-skool afl name: `dictornary`)
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            ..Tokens::default()
-        }
+        Tokens::default()
     }
 
     /// Add tokens from a slice of Vecs of bytes
@@ -331,8 +329,10 @@ where
         }
 
         input.bytes_mut().resize(size + len, 0);
-        buffer_self_copy(input.bytes_mut(), off, off + len, size - off);
-        buffer_copy(input.bytes_mut(), token, 0, off, len);
+        unsafe {
+            buffer_self_copy(input.bytes_mut(), off, off + len, size - off);
+            buffer_copy(input.bytes_mut(), token, 0, off, len);
+        }
 
         Ok(MutationResult::Mutated)
     }
@@ -394,7 +394,9 @@ where
             len = size - off;
         }
 
-        buffer_copy(input.bytes_mut(), token, 0, off, len);
+        unsafe {
+            buffer_copy(input.bytes_mut(), token, 0, off, len);
+        }
 
         Ok(MutationResult::Mutated)
     }
@@ -562,7 +564,9 @@ where
                     let mut size = core::cmp::min(v.0.len(), len - i);
                     while size != 0 {
                         if v.0[0..size] == input.bytes()[i..i + size] {
-                            buffer_copy(input.bytes_mut(), &v.1, 0, i, size);
+                            unsafe {
+                                buffer_copy(input.bytes_mut(), &v.1, 0, i, size);
+                            }
                             result = MutationResult::Mutated;
                             break 'outer;
                         }
@@ -571,7 +575,9 @@ where
                     size = core::cmp::min(v.1.len(), len - i);
                     while size != 0 {
                         if v.1[0..size] == input.bytes()[i..i + size] {
-                            buffer_copy(input.bytes_mut(), &v.0, 0, i, size);
+                            unsafe {
+                                buffer_copy(input.bytes_mut(), &v.0, 0, i, size);
+                            }
                             result = MutationResult::Mutated;
                             break 'outer;
                         }
@@ -1039,7 +1045,9 @@ impl AFLppRedQueen {
         }
 
         if copy_len > 0 {
-            buffer_copy(buf, repl, 0, buf_idx, copy_len);
+            unsafe {
+                buffer_copy(buf, repl, 0, buf_idx, copy_len);
+            }
             true
         } else {
             false
