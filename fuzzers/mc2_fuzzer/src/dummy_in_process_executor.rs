@@ -109,7 +109,7 @@ where
     H: FnMut(&<S as UsesInput>::Input) -> ExitKind + ?Sized,
     HB: BorrowMut<H>,
     OT: ObserversTuple<S>,
-    S: HasClientPerfMonitor,
+    S: HasClientPerfMonitor + UsesInput,
 {
     /// Create a new in mem executor.
     /// Caution: crash and restart in one of them will lead to odd behavior if multiple are used,
