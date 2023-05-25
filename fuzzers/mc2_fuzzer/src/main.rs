@@ -4,14 +4,16 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Mutex;
 
-use core::{fmt::Debug, time::Duration};
+use core::fmt::Debug;
+use core::marker::PhantomData;
+use core::time::Duration;
 
 use libafl::{
     bolts::rands::{Rand, StdRand},
-    executors::{inprocess::InProcessExecutor, Executor, ExitKind},
+    executors::{inprocess::InProcessExecutor, ExitKind},
     fuzzer::Fuzzer,
     inputs::{BytesInput, HasBytesVec},
-    prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput},
+    prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput, UsesState},
 };
 
 mod dummy_in_process_executor;
@@ -33,22 +35,31 @@ extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
 }
 
-struct Mc2Fuzzer {
+struct Mc2Fuzzer<R> {
     is_left: bool,
     branch_policy: HashMap<u32, BranchSequence>,
     p: f64,
+    phantom: PhantomData<R>,
 }
 
-impl Mc2Fuzzer {
+impl<R> UsesState for Mc2Fuzzer<R>
+where
+    R: Rand,
+{
+    type State = mc2_state::Mc2State<R>;
+}
+
+impl<R> Mc2Fuzzer<R> {
     pub fn new(p: f64, branch_policy: HashMap<u32, BranchSequence>) -> Self {
         Self {
             is_left: false,
             p,
             branch_policy,
+            phantom: PhantomData,
         }
     }
 
-    fn fuzz_loop<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, R, MT>(
+    fn fuzz_loop<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
         executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
@@ -105,7 +116,7 @@ impl Mc2Fuzzer {
         // }
     }
 
-    fn noisy_counting_oracle<H, OT, R, MT>(
+    fn noisy_counting_oracle<H, OT, MT>(
         &mut self,
         i_l: &Hyperrectangle,
         i_r: &Hyperrectangle,
@@ -138,7 +149,7 @@ impl Mc2Fuzzer {
         self.is_left = i_l_count >= i_r_count;
     }
 
-    fn counting_helper<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, R, MT>(
+    fn counting_helper<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
         h: &Hyperrectangle,
         executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
