@@ -115,7 +115,7 @@ impl Mc2Fuzzer {
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
         OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>,
-        R : Rand,
+        R: Rand,
     {
         self.counting_helper(i_l, executor, state, manager);
         let mut i_l_count = 1.0;
@@ -146,7 +146,7 @@ impl Mc2Fuzzer {
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
-        R : Rand,
+        R: Rand,
     {
         BRANCH_CMP.lock().unwrap().clear();
 

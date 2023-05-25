@@ -8,7 +8,6 @@ use libafl::{
     events::{EventFirer, EventRestarter},
     executors::{Executor, ExitKind, HasObservers},
     feedbacks::Feedback,
-    fuzzer::HasObjective,
     inputs::UsesInput,
     observers::{ObserversTuple, UsesObservers},
     state::{HasClientPerfMonitor, UsesState},
@@ -128,7 +127,7 @@ where
         Self: Executor<EM, Z, State = S>,
         EM: EventFirer<State = S> + EventRestarter,
         OF: Feedback<S>,
-        Z: HasObjective<Objective = OF, State = S>, // TODO : should we keep it?
+        Z: UsesState<State = S>, //HasObjective<Objective = OF, State = S>, // TODO : should we keep it?
     {
         Ok(Self {
             harness_fn,

@@ -1,12 +1,15 @@
-use core::{fmt::Debug, time::Duration};
+use core::{fmt::Debug, marker::PhantomData, time::Duration};
 use serde::{Deserialize, Serialize};
 
 use libafl::{
-    bolts::rands::Rand,
+    bolts::{
+        rands::Rand,
+        serdeany::{NamedSerdeAnyMap, SerdeAnyMap},
+    },
     inputs::BytesInput,
+    inputs::UsesInput,
     monitors::ClientPerfMonitor,
-    prelude::{State, UsesInput},
-    state::HasClientPerfMonitor,
+    state::{HasClientPerfMonitor, HasExecutions, HasMetadata, HasNamedMetadata, HasRand, State},
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy)]
@@ -42,7 +45,21 @@ pub struct Mc2State<R> {
     weighted_groups: Vec<WeightGroup>,
     // Number of bytes of the input
     input_size: usize,
-    // TODO add metadata & named_metadata
+    /// Metadata stored for this state by one of the components
+    metadata: SerdeAnyMap,
+    /// Metadata stored with names
+    named_metadata: NamedSerdeAnyMap,
+    /// Performance statistics for this fuzzer
+    #[cfg(feature = "introspection")]
+    introspection_monitor: ClientPerfMonitor,
+    #[cfg(feature = "std")]
+    /// Remaining initial inputs to load, if any
+    remaining_initial_files: Option<Vec<PathBuf>>,
+    phantom: PhantomData<BytesInput>,
+}
+
+impl<R> UsesInput for Mc2State<R> {
+    type Input = BytesInput;
 }
 
 impl<R> State for Mc2State<R>
@@ -52,8 +69,65 @@ where
 {
 }
 
-impl<R> UsesInput for Mc2State<R> {
-    type Input = BytesInput;
+impl<R> HasRand for Mc2State<R>
+where
+    R: Rand,
+{
+    type Rand = R;
+
+    /// The rand instance
+    #[inline]
+    fn rand(&self) -> &Self::Rand {
+        &self.rand
+    }
+
+    /// The rand instance (mutable)
+    #[inline]
+    fn rand_mut(&mut self) -> &mut Self::Rand {
+        &mut self.rand
+    }
+}
+
+impl<R> HasMetadata for Mc2State<R> {
+    /// Get all the metadata into an [`hashbrown::HashMap`]
+    #[inline]
+    fn metadata_map(&self) -> &SerdeAnyMap {
+        &self.metadata
+    }
+
+    /// Get all the metadata into an [`hashbrown::HashMap`] (mutable)
+    #[inline]
+    fn metadata_map_mut(&mut self) -> &mut SerdeAnyMap {
+        &mut self.metadata
+    }
+}
+
+impl<R> HasNamedMetadata for Mc2State<R> {
+    /// Get all the metadata into an [`hashbrown::HashMap`]
+    #[inline]
+    fn named_metadata_map(&self) -> &NamedSerdeAnyMap {
+        &self.named_metadata
+    }
+
+    /// Get all the metadata into an [`hashbrown::HashMap`] (mutable)
+    #[inline]
+    fn named_metadata_map_mut(&mut self) -> &mut NamedSerdeAnyMap {
+        &mut self.named_metadata
+    }
+}
+
+impl<R> HasExecutions for Mc2State<R> {
+    /// The executions counter
+    #[inline]
+    fn executions(&self) -> &usize {
+        &self.executions
+    }
+
+    /// The executions counter (mutable)
+    #[inline]
+    fn executions_mut(&mut self) -> &mut usize {
+        &mut self.executions
+    }
 }
 
 // TODO GenericInProcessExecutor requires the implementation of trait HasCorpus in the state, should we add it?
@@ -80,6 +154,9 @@ where
             start_time: Duration::from_millis(0),
             weighted_groups: groups,
             input_size,
+            metadata: SerdeAnyMap::default(),
+            named_metadata: NamedSerdeAnyMap::default(),
+            phantom: PhantomData,
         }
     }
 
@@ -178,8 +255,19 @@ where
         }
     }
 
-    pub fn get_rand_byte(&self )  -> u8 {
+    pub fn get_rand_byte(&self) -> u8 {
         self.rand.next() as u8
+    }
+}
+
+#[cfg(feature = "introspection")]
+impl<R> HasClientPerfMonitor for Mc2State<R> {
+    fn introspection_monitor(&self) -> &ClientPerfMonitor {
+        &self.introspection_monitor
+    }
+
+    fn introspection_monitor_mut(&mut self) -> &mut ClientPerfMonitor {
+        &mut self.introspection_monitor
     }
 }
 
