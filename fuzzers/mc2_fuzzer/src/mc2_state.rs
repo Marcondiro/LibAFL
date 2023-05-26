@@ -130,8 +130,6 @@ impl<R> HasExecutions for Mc2State<R> {
     }
 }
 
-// TODO GenericInProcessExecutor requires the implementation of trait HasCorpus in the state, should we add it?
-
 impl<R> Mc2State<R>
 where
     R: Rand,
@@ -163,7 +161,7 @@ where
     pub fn terminate_search(&self) -> Option<Hyperrectangle> {
         let threshold = 1.0 / f64::sqrt((self.input_size * 8) as f64);
 
-        for group in self.weighted_groups {
+        for group in &self.weighted_groups {
             let mut cardinality = 1;
             for j in 0..self.input_size {
                 let interval = group.h.interval[j];
@@ -194,7 +192,7 @@ where
     }
 
     pub fn split_group(&mut self, group_index: usize) {
-        let target_group = &self.weighted_groups[group_index];
+        let target_group = self.weighted_groups[group_index].clone();
 
         let hyperrectangle = Hyperrectangle {
             interval: target_group.h.interval.clone(),
@@ -219,7 +217,7 @@ where
         let m = ((target_group.h.interval[dim].high as u16
             + target_group.h.interval[dim].low as u16)
             / 2) as u8;
-        target_group.h.interval[dim].high = m;
+        self.weighted_groups[group_index].h.interval[dim].high = m;
         self.weighted_groups[group_index + 1].h.interval[dim].low = m + 1;
     }
 
@@ -255,7 +253,7 @@ where
         }
     }
 
-    pub fn get_rand_byte(&self) -> u8 {
+    pub fn get_rand_byte(&mut self) -> u8 {
         self.rand.next() as u8
     }
 }

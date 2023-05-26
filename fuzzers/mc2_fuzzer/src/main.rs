@@ -70,7 +70,7 @@ impl<R> Mc2Fuzzer<R> {
     {
         // noisy binary search
 
-        let mut last = current_time();
+        let last = current_time();
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
 
         let promising_hyperrectangle;
@@ -82,8 +82,8 @@ impl<R> Mc2Fuzzer<R> {
                     state.split_group(group_index);
 
                     self.noisy_counting_oracle(
-                        state.get_hyperrectangles(group_index),
-                        state.get_hyperrectangles(group_index + 1),
+                        &state.get_hyperrectangles(group_index).clone(),
+                        &state.get_hyperrectangles(group_index + 1).clone(),
                         executor,
                         state,
                         manager,
@@ -426,24 +426,24 @@ fn main() {
         .unwrap()
         .insert(0, BranchSequence { direction: false });
 
-    let mut harness = |input: &BytesInput| {
+    let harness = |input: &BytesInput| {
         unsafe {
             LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
         }
         ExitKind::Ok
     };
 
-    let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
+    // let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
 
-    // TODO support tui as in BabyFuzzer ?
-    let mon = SimpleMonitor::new(|s| println!("{s}"));
-    let mut mgr = SimpleEventManager::new(mon);
+    // // TODO support tui as in BabyFuzzer ?
+    // let mon = SimpleMonitor::new(|s| println!("{s}"));
+    // let mut mgr = SimpleEventManager::new(mon);
 
-    let fuzzer = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
+    // let fuzzer = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
 
-    let mut executor =
-        DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
-            .expect("Failed to create the Executor");
+    // let mut executor =
+    //     DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
+    //         .expect("Failed to create the Executor");
 
     // noisy_binary_search(0.01);
 }
