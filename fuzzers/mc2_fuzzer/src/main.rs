@@ -4,13 +4,14 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Mutex;
 
+use core::borrow::BorrowMut;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::time::Duration;
 
 use libafl::{
     bolts::rands::{Rand, StdRand},
-    executors::{inprocess::InProcessExecutor, ExitKind},
+    executors::{Executor, ExitKind},
     fuzzer::Fuzzer,
     inputs::{BytesInput, HasBytesVec},
     prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput, UsesState},
@@ -59,14 +60,15 @@ impl<R> Mc2Fuzzer<R> {
         }
     }
 
-    fn fuzz_loop<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
+    fn fuzz_loop<H, HB, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
-        executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
+        executor: &mut DummyInProcessExecutor<H, HB, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         R: Rand,
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+        HB: BorrowMut<H>,
     {
         // noisy binary search
 
@@ -116,15 +118,16 @@ impl<R> Mc2Fuzzer<R> {
         // }
     }
 
-    fn noisy_counting_oracle<H, OT, MT>(
+    fn noisy_counting_oracle<H, HB, OT, MT>(
         &mut self,
         i_l: &Hyperrectangle,
         i_r: &Hyperrectangle,
-        executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
+        executor: &mut DummyInProcessExecutor<H, HB, OT, Mc2State<R>>,
         state: &mut mc2_state::Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+        HB: BorrowMut<H>,
         OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>,
         R: Rand,
     {
@@ -149,14 +152,15 @@ impl<R> Mc2Fuzzer<R> {
         self.is_left = i_l_count >= i_r_count;
     }
 
-    fn counting_helper<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
+    fn counting_helper<H, HB, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
         h: &Hyperrectangle,
-        executor: &mut InProcessExecutor<H, OT, Mc2State<R>>,
+        executor: &mut DummyInProcessExecutor<H, HB, OT, Mc2State<R>>,
         state: &mut mc2_state::Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+        HB: BorrowMut<H>,
         R: Rand,
     {
         BRANCH_CMP.lock().unwrap().clear();
@@ -173,7 +177,7 @@ impl<R> Mc2Fuzzer<R> {
             let input = BytesInput::new(tmp_input);
             //TODO Should we use the manager and manager.process(self, state, executor)?; ?
             // fuzzer.execute_input
-            // executor.run_target(&mut self, state, manager, &input);
+            executor.run_target(self, state, manager, &input);
         }
     }
 
