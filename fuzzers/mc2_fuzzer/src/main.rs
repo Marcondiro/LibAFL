@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::convert::TryInto;
 use std::sync::Mutex;
 
-use core::borrow::BorrowMut;
 use core::fmt::Debug;
 use core::marker::PhantomData;
 use core::time::Duration;
@@ -62,13 +61,12 @@ impl<R> Mc2Fuzzer<R> {
 
     fn fuzz_loop<H, HB, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
-        executor: &mut DummyInProcessExecutor<H, HB, OT, Mc2State<R>>,
+        executor: &mut DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         R: Rand,
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
-        HB: BorrowMut<H>,
     {
         // noisy binary search
 
@@ -118,16 +116,15 @@ impl<R> Mc2Fuzzer<R> {
         // }
     }
 
-    fn noisy_counting_oracle<H, HB, OT, MT>(
+    fn noisy_counting_oracle<H, OT, MT>(
         &mut self,
         i_l: &Hyperrectangle,
         i_r: &Hyperrectangle,
-        executor: &mut DummyInProcessExecutor<H, HB, OT, Mc2State<R>>,
+        executor: &mut DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut mc2_state::Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
-        HB: BorrowMut<H>,
         OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>,
         R: Rand,
     {
@@ -152,15 +149,14 @@ impl<R> Mc2Fuzzer<R> {
         self.is_left = i_l_count >= i_r_count;
     }
 
-    fn counting_helper<H, HB, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
+    fn counting_helper<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
         h: &Hyperrectangle,
-        executor: &mut DummyInProcessExecutor<H, HB, OT, Mc2State<R>>,
+        executor: &mut DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut mc2_state::Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
     ) where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
-        HB: BorrowMut<H>,
         R: Rand,
     {
         BRANCH_CMP.lock().unwrap().clear();
@@ -437,17 +433,14 @@ fn main() {
         ExitKind::Ok
     };
 
-    // let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
+    let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
 
-    // // TODO support tui as in BabyFuzzer ?
+    // TODO support tui as in BabyFuzzer ?
     // let mon = SimpleMonitor::new(|s| println!("{s}"));
     // let mut mgr = SimpleEventManager::new(mon);
 
-    // let fuzzer = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
+    let fuzzer: Mc2Fuzzer<StdRand> = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
 
-    // let mut executor =
-    //     DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
-    //         .expect("Failed to create the Executor");
-
-    // noisy_binary_search(0.01);
+    // let mut executor = DummyInProcessExecutor::new(&mut harness, &mut fuzzer, &mut state, &mut mgr)
+    //     .expect("Failed to create the Executor");
 }
