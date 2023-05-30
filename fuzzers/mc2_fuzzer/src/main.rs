@@ -224,7 +224,12 @@ fn main() {
     BRANCH_POLICY
         .lock()
         .unwrap()
-        .insert(0, BranchSequence { direction: false });
+        .insert(0, BranchSequence { direction: true });
+
+    BRANCH_POLICY
+        .lock()
+        .unwrap()
+        .insert(1, BranchSequence { direction: true });
 
     let mut harness = |input: &BytesInput| {
         unsafe {

@@ -4,21 +4,19 @@
 #include <stdio.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  // TODO for which obscure reason does this fail? Rust - C data types are
-  // different?
-  //   assert(size == 1LU);
+  // Not using assert(size == 1) because it creates new
+  // basic blacks, we want this function to have only 
+  // three basic block
   unsigned int byte0 = data[0];
+  // to avoid unused variable compilation warnings
   (void)size;
-
+  
   printf("%d is input\n", byte0);
-
-  int sum = 0;
-  if (byte0 < 3) {
-    sum = byte0 + 0;
-    printf("Took true direction: %d is the result\n", sum);
+  
+  if (byte0 > 42 && byte0 < 54) {
+    printf("Took true direction!\n");
   } else {
-    sum = byte0 - 15;
-    printf("Took false direction: %d is the result\n", sum);
+    printf("Took false direction!\n");
   }
 
   return 0;

@@ -14,7 +14,7 @@
 #include <set>
 #include <fstream>
 
-#define BRANCHES_FILE "branches.txt"
+#define BRANCHES_FILE ".branches.txt"
 
 using namespace llvm;
 
