@@ -23,7 +23,6 @@ where
     harness_fn: &'a mut H,
     /// The observers, observing each run
     observers: OT,
-    // Crash and timeout hah
     phantom: PhantomData<(S, *const H)>,
 }
 
