@@ -231,6 +231,11 @@ fn main() {
         .unwrap()
         .insert(1, BranchSequence { direction: true });
 
+    BRANCH_POLICY
+        .lock()
+        .unwrap()
+        .insert(2, BranchSequence { direction: true });
+
     let mut harness = |input: &BytesInput| {
         unsafe {
             LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
