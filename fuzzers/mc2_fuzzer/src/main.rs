@@ -2,6 +2,8 @@ use lazy_static::lazy_static;
 use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
 
 use core::fmt::Debug;
@@ -24,6 +26,8 @@ lazy_static! {
     static ref BRANCH_CMP: Mutex<HashMap<u32, BranchCmp>> = Mutex::new(HashMap::new());
     static ref BRANCH_POLICY: Mutex<HashMap<u32, BranchSequence>> = Mutex::new(HashMap::new());
 }
+
+const BRANCH_FILE_NAME: &str = "branch_policy.txt";
 
 extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
@@ -219,22 +223,61 @@ where
         });
 }
 
+fn read_branch_policy_file(file_name: &str) -> Result<(), String> {
+    // Attempt to open the file
+    if let Ok(file) = File::open(file_name) {
+        let reader = BufReader::new(file);
+
+        // Read each line in the file
+        for line in reader.lines() {
+            // Attempt to read the line
+            if let Ok(line) = line {
+                let mut parts = line.split_whitespace();
+
+                // Extract the number from the line
+                if let Some(number_str) = parts.next() {
+                    // Extract the word from the line
+                    if let Some(word) = parts.next() {
+                        // Parse the number as u32
+                        let br_id = match number_str.parse::<u32>() {
+                            Ok(num) => num,
+                            Err(_) => return Err(format!("Invalid number in line: {}", line)),
+                        };
+
+                        // Determine the direction based on the word
+                        let direction = match word {
+                            "true" => true,
+                            "false" => false,
+                            _ => return Err(format!("Invalid word in line: {}", line)),
+                        };
+
+                        // Print the extracted values
+                        println!("br_id: {}, direction: {}", br_id, direction);
+
+                        // Insert the branch policy into the shared data structure
+                        BRANCH_POLICY.lock().unwrap().insert(
+                            br_id,
+                            BranchSequence {
+                                direction: direction,
+                            },
+                        );
+                    } else {
+                        return Err(format!("Missing word in line: {}", line));
+                    }
+                } else {
+                    return Err(format!("Missing number in line: {}", line));
+                }
+            }
+        }
+        Ok(())
+    } else {
+        // Failed to open the file
+        Err("Failed to open the file".to_string())
+    }
+}
+
 fn main() {
-    //TODO move to file (?)
-    BRANCH_POLICY
-        .lock()
-        .unwrap()
-        .insert(0, BranchSequence { direction: true });
-
-    BRANCH_POLICY
-        .lock()
-        .unwrap()
-        .insert(1, BranchSequence { direction: true });
-
-    BRANCH_POLICY
-        .lock()
-        .unwrap()
-        .insert(2, BranchSequence { direction: true });
+    read_branch_policy_file(BRANCH_FILE_NAME).unwrap();
 
     let mut harness = |input: &BytesInput| {
         unsafe {
