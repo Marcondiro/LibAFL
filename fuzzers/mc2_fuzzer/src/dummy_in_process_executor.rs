@@ -108,7 +108,7 @@ where
     /// * `harness_fn` - the harness, executing the function
     /// * `observers` - the observers observing the target during execution
     /// This may return an error on unix, if signal handler setup fails
-    pub fn new<EM, OF, Z>(
+    pub fn new<EM, Z>(
         harness_fn: &'a mut H,
         observers: OT,
         _fuzzer: &mut Z,
@@ -118,7 +118,6 @@ where
     where
         Self: Executor<EM, Z, State = S>,
         EM: EventFirer<State = S> + EventRestarter,
-        OF: Feedback<S>,
         Z: UsesState<State = S>, //HasObjective<Objective = OF, State = S>, // TODO : should we keep it?
     {
         Ok(Self {

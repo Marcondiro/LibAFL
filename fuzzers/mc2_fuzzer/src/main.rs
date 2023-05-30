@@ -426,7 +426,7 @@ fn main() {
         .unwrap()
         .insert(0, BranchSequence { direction: false });
 
-    let harness = |input: &BytesInput| {
+    let mut harness = |input: &BytesInput| {
         unsafe {
             LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
         }
@@ -436,11 +436,14 @@ fn main() {
     let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
 
     // TODO support tui as in BabyFuzzer ?
-    // let mon = SimpleMonitor::new(|s| println!("{s}"));
-    // let mut mgr = SimpleEventManager::new(mon);
+    let mon = SimpleMonitor::new(|s| println!("{s}"));
+    let mut mgr = SimpleEventManager::new(mon);
 
-    let fuzzer: Mc2Fuzzer<StdRand> = Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
+    let mut fuzzer: Mc2Fuzzer<StdRand> =
+        Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
 
-    // let mut executor = DummyInProcessExecutor::new(&mut harness, &mut fuzzer, &mut state, &mut mgr)
-    //     .expect("Failed to create the Executor");
+    let mut executor =
+        DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
+            .expect("Failed to create the Executor");
+
 }
