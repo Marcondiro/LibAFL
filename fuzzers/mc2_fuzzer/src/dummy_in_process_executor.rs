@@ -6,7 +6,6 @@ use core::{
 use libafl::{
     events::{EventFirer, EventRestarter},
     executors::{Executor, ExitKind, HasObservers},
-    feedbacks::Feedback,
     inputs::UsesInput,
     observers::{ObserversTuple, UsesObservers},
     state::{HasClientPerfMonitor, UsesState},

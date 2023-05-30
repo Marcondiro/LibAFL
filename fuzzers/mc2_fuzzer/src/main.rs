@@ -11,7 +11,6 @@ use core::time::Duration;
 use libafl::{
     bolts::rands::{Rand, StdRand},
     executors::{Executor, ExitKind},
-    fuzzer::Fuzzer,
     inputs::{BytesInput, HasBytesVec},
     prelude::{current_time, SimpleEventManager, SimpleMonitor, UsesInput, UsesState},
 };
@@ -37,7 +36,6 @@ extern "C" {
 
 struct Mc2Fuzzer<R> {
     is_left: bool,
-    branch_policy: HashMap<u32, BranchSequence>,
     p: f64,
     phantom: PhantomData<R>,
 }
@@ -50,16 +48,15 @@ where
 }
 
 impl<R> Mc2Fuzzer<R> {
-    pub fn new(p: f64, branch_policy: HashMap<u32, BranchSequence>) -> Self {
+    pub fn new(p: f64) -> Self {
         Self {
             is_left: false,
             p,
-            branch_policy,
             phantom: PhantomData,
         }
     }
 
-    fn fuzz_loop<H, HB, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
+    fn fuzz_loop<H, OT: libafl::observers::ObserversTuple<mc2_state::Mc2State<R>>, MT>(
         &mut self,
         executor: &mut DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
@@ -421,6 +418,7 @@ where
 }
 
 fn main() {
+    //TODO move to file (?)
     BRANCH_POLICY
         .lock()
         .unwrap()
@@ -439,11 +437,11 @@ fn main() {
     let mon = SimpleMonitor::new(|s| println!("{s}"));
     let mut mgr = SimpleEventManager::new(mon);
 
-    let mut fuzzer: Mc2Fuzzer<StdRand> =
-        Mc2Fuzzer::new(0.01, BRANCH_POLICY.lock().unwrap().clone());
+    let mut fuzzer: Mc2Fuzzer<StdRand> = Mc2Fuzzer::new(0.01);
 
     let mut executor =
         DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
             .expect("Failed to create the Executor");
 
+    fuzzer.fuzz_loop(&mut executor, &mut state, &mut mgr);
 }
