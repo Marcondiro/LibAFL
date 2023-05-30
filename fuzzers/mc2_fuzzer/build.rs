@@ -28,5 +28,7 @@ fn main() {
         .flag("-g3")
         .flag("-O0")
         .compile("harness");
+    
     println!("cargo:rerun-if-changed=harness/harness.c");
+    println!("cargo:rerun-if-changed=harness/skeleton/skeleton.cpp");
 }
