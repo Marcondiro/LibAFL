@@ -18,7 +18,6 @@ pub struct Interval {
     pub high: u8,
 }
 
-// TODO replace this struct with vec of intervals in WeightGroup
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hyperrectangle {
     pub interval: Vec<Interval>,

@@ -9,9 +9,11 @@ use core::time::Duration;
 
 use libafl::{
     bolts::rands::Rand,
+    events::ProgressReporter,
     executors::{Executor, ExitKind},
     inputs::BytesInput,
-    prelude::{current_time, SimpleEventManager, UsesInput, UsesState},
+    prelude::{current_time, Monitor, SimpleEventManager, UsesInput, UsesState},
+    Error,
 };
 
 const STATS_TIMEOUT_DEFAULT: Duration = Duration::from_secs(15);
@@ -44,13 +46,15 @@ impl<R> Mc2Fuzzer<R> {
         executor: &mut dummy_in_process_executor::DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
-    ) where
+    ) -> Result<(), Error>
+    where
         R: Rand,
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
+        MT: Monitor,
     {
         // noisy binary search
 
-        let last = current_time();
+        let mut last = current_time();
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
 
         let promising_hyperrectangle;
@@ -84,7 +88,7 @@ impl<R> Mc2Fuzzer<R> {
                     break;
                 }
             }
-            // last = manager.maybe_report_progress(state, last, monitor_timeout)?;
+            last = manager.maybe_report_progress(state, last, monitor_timeout)?;
         }
 
         // TODO return promising instead of printing
@@ -94,6 +98,7 @@ impl<R> Mc2Fuzzer<R> {
         // for wg in groups {
         //     println!("{:?}", wg.h);
         // }
+        Ok(())
     }
 
     fn noisy_counting_oracle<H, OT, MT>(
@@ -151,8 +156,6 @@ impl<R> Mc2Fuzzer<R> {
             }
 
             let input = BytesInput::new(tmp_input);
-            //TODO Should we use the manager and manager.process(self, state, executor)?; ?
-            // fuzzer.execute_input
             executor.run_target(self, state, manager, &input);
         }
     }
