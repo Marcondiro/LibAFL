@@ -57,47 +57,30 @@ impl<R> Mc2Fuzzer<R> {
         let mut last = current_time();
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
 
-        let promising_hyperrectangle;
-        loop {
-            match state.terminate_search() {
-                None => {
-                    let (group_index, w_l) = state.find_group();
+        while (!state.terminate_search()) {
+            let (group_index, w_l) = state.find_group();
 
-                    state.split_group(group_index);
+            state.split_group(group_index);
 
-                    self.noisy_counting_oracle(
-                        &state.get_hyperrectangles(group_index).clone(),
-                        &state.get_hyperrectangles(group_index + 1).clone(),
-                        executor,
-                        state,
-                        manager,
-                    );
+            self.noisy_counting_oracle(
+                &state.get_hyperrectangles(group_index).clone(),
+                &state.get_hyperrectangles(group_index + 1).clone(),
+                executor,
+                state,
+                manager,
+            );
 
-                    let z = if self.is_left {
-                        (w_l + state.get_weight(group_index)) * (1.0 - self.p)
-                            + (1.0 - w_l) * self.p
-                    } else {
-                        (w_l + state.get_weight(group_index)) * self.p
-                            + (1.0 - w_l) * (1.0 - self.p)
-                    };
+            let z = if self.is_left {
+                (w_l + state.get_weight(group_index)) * (1.0 - self.p) + (1.0 - w_l) * self.p
+            } else {
+                (w_l + state.get_weight(group_index)) * self.p + (1.0 - w_l) * (1.0 - self.p)
+            };
 
-                    state.update_weights(group_index, self.p, z, self.is_left);
-                }
-                Some(ph) => {
-                    promising_hyperrectangle = ph;
-                    break;
-                }
-            }
+            state.update_weights(group_index, self.p, z, self.is_left);
+
             last = manager.maybe_report_progress(state, last, monitor_timeout)?;
         }
 
-        // TODO return promising instead of printing
-        println!("--- Most Promising Input Region ----");
-        println!("{:?}", promising_hyperrectangle);
-        // println!("--- Obtained groups at the end of execution ----");
-        // for wg in groups {
-        //     println!("{:?}", wg.h);
-        // }
         Ok(())
     }
 
@@ -148,10 +131,11 @@ impl<R> Mc2Fuzzer<R> {
 
         for _ in 0..EXECUTION_NUMBER {
             let mut tmp_input = Vec::new();
-            for i in 0..h.interval.len() {
+            for i in 0..h.intervals.len() {
                 tmp_input.push(
-                    (state.get_rand_byte() as u16 % (h.interval[i].high as u16 - h.interval[i].low as u16 + 1) 
-                        + h.interval[i].low as u16) as u8,
+                    (state.get_rand_byte() as u16
+                        % (h.intervals[i].high as u16 - h.intervals[i].low as u16 + 1)
+                        + h.intervals[i].low as u16) as u8,
                 );
             }
 

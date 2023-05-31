@@ -300,4 +300,9 @@ fn main() {
             .expect("Failed to create the Executor");
 
     fuzzer.fuzz_loop(&mut executor, &mut state, &mut mgr);
+
+    if let Some(promising_hyperrectangles) = state.get_solutions() {
+        println!("--- Most Promising Input Region ----");
+        println!("{:?}", promising_hyperrectangles);
+    }
 }

@@ -20,7 +20,7 @@ pub struct Interval {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hyperrectangle {
-    pub interval: Vec<Interval>,
+    pub intervals: Vec<Interval>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -44,6 +44,8 @@ pub struct Mc2State<R> {
     weighted_groups: Vec<WeightGroup>,
     // Number of bytes of the input
     input_size: usize,
+    // Solutions corpus
+    solutions: Option<Hyperrectangle>,
     /// Metadata stored for this state by one of the components
     metadata: SerdeAnyMap,
     /// Metadata stored with names
@@ -137,7 +139,7 @@ where
         let mut groups = Vec::new();
 
         let hyperrectangle = Hyperrectangle {
-            interval: vec![Interval { low: 0, high: 255 }; input_size],
+            intervals: vec![Interval { low: 0, high: 255 }; input_size],
         };
 
         groups.push(WeightGroup {
@@ -151,27 +153,34 @@ where
             start_time: Duration::from_millis(0),
             weighted_groups: groups,
             input_size,
+            solutions: None,
             metadata: SerdeAnyMap::default(),
             named_metadata: NamedSerdeAnyMap::default(),
             phantom: PhantomData,
         }
     }
 
-    pub fn terminate_search(&self) -> Option<Hyperrectangle> {
+    pub fn terminate_search(&mut self) -> bool {
         let threshold = 1.0 / f64::sqrt((self.input_size * 8) as f64);
 
         for group in &self.weighted_groups {
             let mut cardinality = 1;
             for j in 0..self.input_size {
-                let interval = group.h.interval[j];
+                let interval = group.h.intervals[j];
                 cardinality *= (interval.high - interval.low) as u128 + 1;
             }
 
             if threshold < (group.weight / cardinality as f64) {
-                return Some(group.h.clone());
+                // add the solution to the state
+                self.solutions = Some(group.h.clone());
+                return true;
             }
         }
-        None
+        false
+    }
+
+    pub fn get_solutions(&self) -> &Option<Hyperrectangle> {
+        &self.solutions
     }
 
     pub fn find_group(&self) -> (usize, f64) {
@@ -194,13 +203,13 @@ where
         let target_group = self.weighted_groups[group_index].clone();
 
         let hyperrectangle = Hyperrectangle {
-            interval: target_group.h.interval.clone(),
+            intervals: target_group.h.intervals.clone(),
         };
 
         let mut dim = 0;
         // TODO fix this to avoid dim == size
-        while dim < target_group.h.interval.len()
-            && target_group.h.interval[dim].high == target_group.h.interval[dim].low
+        while dim < target_group.h.intervals.len()
+            && target_group.h.intervals[dim].high == target_group.h.intervals[dim].low
         {
             dim += 1;
         }
@@ -213,11 +222,11 @@ where
             },
         );
 
-        let m = ((target_group.h.interval[dim].high as u16
-            + target_group.h.interval[dim].low as u16)
+        let m = ((target_group.h.intervals[dim].high as u16
+            + target_group.h.intervals[dim].low as u16)
             / 2) as u8;
-        self.weighted_groups[group_index].h.interval[dim].high = m;
-        self.weighted_groups[group_index + 1].h.interval[dim].low = m + 1;
+        self.weighted_groups[group_index].h.intervals[dim].high = m;
+        self.weighted_groups[group_index + 1].h.intervals[dim].low = m + 1;
     }
 
     pub fn get_hyperrectangles(&self, group_index: usize) -> &Hyperrectangle {
