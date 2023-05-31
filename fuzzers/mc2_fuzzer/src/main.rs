@@ -28,6 +28,7 @@ lazy_static! {
 }
 
 const BRANCH_FILE_NAME: &str = "branch_policy.txt";
+const INPUT_SIZE: usize = 2;
 
 extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
@@ -286,7 +287,7 @@ fn main() {
         ExitKind::Ok
     };
 
-    let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), 1);
+    let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), INPUT_SIZE);
 
     // TODO support tui as in BabyFuzzer ?
     let mon = SimpleMonitor::new(|s| println!("{s}"));

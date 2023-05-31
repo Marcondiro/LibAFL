@@ -150,8 +150,8 @@ impl<R> Mc2Fuzzer<R> {
             let mut tmp_input = Vec::new();
             for i in 0..h.interval.len() {
                 tmp_input.push(
-                    state.get_rand_byte() % (h.interval[i].high - h.interval[i].low + 1)
-                        + h.interval[i].low,
+                    (state.get_rand_byte() as u16 % (h.interval[i].high as u16 - h.interval[i].low as u16 + 1) 
+                        + h.interval[i].low as u16) as u8,
                 );
             }
 
