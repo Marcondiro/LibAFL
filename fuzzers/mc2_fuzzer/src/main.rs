@@ -169,6 +169,28 @@ pub extern "C" fn log_func64(
     }
 }
 
+#[no_mangle]
+pub extern "C" fn log_func_f32(
+    br_id: u32,
+    old_cond: bool,
+    arg1: f32,
+    arg2: f32,
+    cond_type: u8,
+) -> bool {
+    log_funchelper(br_id, old_cond, arg1 as i128, arg2 as i128, cond_type)
+}
+
+#[no_mangle]
+pub extern "C" fn log_func_f64(
+    br_id: u32,
+    old_cond: bool,
+    arg1: f64,
+    arg2: f64,
+    cond_type: u8,
+) -> bool {
+    log_funchelper(br_id, old_cond, arg1 as i128, arg2 as i128, cond_type)
+}
+
 fn log_funchelper<T>(br_id: u32, old_cond: bool, args0: T, args1: T, cond_type: u8) -> bool
 where
     i128: From<T>,
