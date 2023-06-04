@@ -52,6 +52,9 @@ bool SkeletonPass::runOnModule(Module &M) {
   IntegerType *Int8Ty = IntegerType::getInt8Ty(C);
   IntegerType *Int1Ty = IntegerType::getInt1Ty(C);
 
+  Type *FloatTy = Type::getFloatTy(C);
+  Type *DoubleTy = Type::getDoubleTy(C);
+
   // Get or insert several functions into the module using their names and
   // argument types.
   FunctionCallee LogFunc[4];
@@ -63,6 +66,13 @@ bool SkeletonPass::runOnModule(Module &M) {
                                      Int32Ty, Int32Ty, Int8Ty, Int8Ty);
   LogFunc[3] = M.getOrInsertFunction("log_func64", Int1Ty, Int32Ty, Int1Ty,
                                      Int64Ty, Int64Ty, Int8Ty, Int8Ty);
+
+  // Support for FLoating point comparison
+  FunctionCallee LogFloatFunc[2];
+  LogFloatFunc[0] = M.getOrInsertFunction("log_func_f32", Int1Ty, Int32Ty,
+                                          FloatTy, FloatTy, Int8Ty, Int8Ty);
+  LogFloatFunc[0] = M.getOrInsertFunction("log_func_f64", Int1Ty, Int32Ty,
+                                          FloatTy, FloatTy, Int8Ty, Int8Ty);
 
   // --------------------------------------------------------
   // IS IT DEAD CODE (?)
@@ -104,7 +114,7 @@ bool SkeletonPass::runOnModule(Module &M) {
       // instruction with the current branch ID as an argument
       // TODO why (?) - try to remove this fake function
       IRBuilder<> IRB(t_inst);
-      // IRB.CreateCall(FakeFunc, {ConstantInt::get(Int32Ty, br_cnt)});
+      IRB.CreateCall(FakeFunc, {ConstantInt::get(Int32Ty, br_cnt)});
 
       // Write on file some information about the current function and branch
       BranchesFile << "@@@ " << F.getName().str() << ", branch id: " << br_cnt
@@ -308,9 +318,114 @@ bool SkeletonPass::runOnModule(Module &M) {
               }
             } else if (FCmpInst *cmp_inst =
                            dyn_cast<FCmpInst>(br_inst->getCondition())) {
-              BranchesFile
-                  << "ERROR: Floating Point Comparison not yet supported\n";
-              assert(0);
+              // it obtains the predicate of the instruction
+              FCmpInst::Predicate pred = cmp_inst->getPredicate();
+
+              int is_signed = 1;
+              assert(pred > 0 && pred <= 255);
+              uint8_t cond_type = pred;
+
+              switch (pred) {
+                case FCmpInst::FCMP_FALSE:
+                  true_cond = "FCMP_FALSE";
+                  false_cond = "FCMP_FALSE";
+                  break;
+                case FCmpInst::FCMP_OEQ:
+                  true_cond = "FCMP_OEQ";
+                  false_cond = "FCMP_ONE";
+                  break;
+                case FCmpInst::FCMP_OGT:
+                  true_cond = "FCMP_OGT";
+                  false_cond = "FCMP_OGE || FCMP_OLT";
+                  break;
+                case FCmpInst::FCMP_OGE:
+                  true_cond = "FCMP_OGE";
+                  false_cond = "FCMP_OLT";
+                  break;
+                case FCmpInst::FCMP_OLT:
+                  true_cond = "FCMP_OLT";
+                  false_cond = "FCMP_OGE";
+                  break;
+                case FCmpInst::FCMP_OLE:
+                  true_cond = "FCMP_OLE";
+                  false_cond = "FCMP_OGT";
+                  break;
+                case FCmpInst::FCMP_ONE:
+                  true_cond = "FCMP_ONE";
+                  false_cond = "FCMP_OEQ";
+                  break;
+                case FCmpInst::FCMP_ORD:
+                  true_cond = "FCMP_ORD";
+                  false_cond = "FCMP_UNO";
+                  break;
+                case FCmpInst::FCMP_UNO:
+                  true_cond = "FCMP_UNO";
+                  false_cond = "FCMP_ORD";
+                  break;
+                case FCmpInst::FCMP_UEQ:
+                  true_cond = "FCMP_UEQ";
+                  false_cond = "FCMP_UNE";
+                  break;
+                case FCmpInst::FCMP_UGT:
+                  true_cond = "FCMP_UGT";
+                  false_cond = "FCMP_ULE";
+                  break;
+                case FCmpInst::FCMP_UGE:
+                  true_cond = "FCMP_UGE";
+                  false_cond = "FCMP_ULT";
+                  break;
+                case FCmpInst::FCMP_ULT:
+                  true_cond = "FCMP_ULT";
+                  false_cond = "FCMP_UGE";
+                  break;
+                case FCmpInst::FCMP_ULE:
+                  true_cond = "FCMP_ULE";
+                  false_cond = "FCMP_UGT";
+                  break;
+                case FCmpInst::FCMP_UNE:
+                  true_cond = "FCMP_UNE";
+                  false_cond = "FCMP_UEQ";
+                  break;
+                case FCmpInst::FCMP_TRUE:
+                  true_cond = "FCMP_TRUE";
+                  false_cond = "FCMP_FALSE";
+                  break;
+              }
+
+              // Write to file the pair (cur_br_id, br_id_x) and the condition
+              // to follow the left or right successor basic blocks
+              BranchesFile << "@@@ edge id (" << cur_br_id << "," << br_id_1
+                           << "), cond type " << true_cond << ", true\n";
+              BranchesFile << "@@@ edge id (" << cur_br_id << "," << br_id_2
+                           << "), cond type " << false_cond << ", false\n";
+
+              // get the operand of the cmp_inst
+              Value *A0 = cmp_inst->getOperand(0);
+              Value *A1 = cmp_inst->getOperand(1);
+
+              if (Type::getFloatTy(C) == A0->getType()) {
+                Value *ret_val = IRB.CreateCall(
+                    LogFloatFunc[0], {ConstantInt::get(Int32Ty, cur_br_id),
+                                      br_inst->getCondition(),
+                                      IRB.CreateFPCast(A0, A0->getType()),
+                                      IRB.CreateFPCast(A1, A1->getType()),
+                                      ConstantInt::get(Int8Ty, is_signed),
+                                      ConstantInt::get(Int8Ty, cond_type)});
+
+                br_inst->setCondition(ret_val);
+
+              } else if (Type::getDoubleTy(C) == A0->getType()) {
+                Value *ret_val = IRB.CreateCall(
+                    LogFloatFunc[1], {ConstantInt::get(Int32Ty, cur_br_id),
+                                      br_inst->getCondition(),
+                                      IRB.CreateFPCast(A0, A0->getType()),
+                                      IRB.CreateFPCast(A1, A1->getType()),
+                                      ConstantInt::get(Int8Ty, is_signed),
+                                      ConstantInt::get(Int8Ty, cond_type)});
+
+                br_inst->setCondition(ret_val);
+              }
+
             } else {
               BranchesFile
                   << "ERROR" << br_inst->getCondition()->getName().str()
