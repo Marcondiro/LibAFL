@@ -70,9 +70,9 @@ bool SkeletonPass::runOnModule(Module &M) {
   // Support for FLoating point comparison
   FunctionCallee LogFloatFunc[2];
   LogFloatFunc[0] = M.getOrInsertFunction("log_func_f32", Int1Ty, Int32Ty,
-                                          FloatTy, FloatTy, Int8Ty, Int8Ty);
-  LogFloatFunc[0] = M.getOrInsertFunction("log_func_f64", Int1Ty, Int32Ty,
-                                          FloatTy, FloatTy, Int8Ty, Int8Ty);
+                                          Int1Ty, FloatTy, FloatTy, Int8Ty);
+  LogFloatFunc[1] = M.getOrInsertFunction("log_func_f64", Int1Ty, Int32Ty,
+                                          Int1Ty, DoubleTy, DoubleTy, Int8Ty);
 
   // --------------------------------------------------------
   // IS IT DEAD CODE (?)
