@@ -57,7 +57,7 @@ impl<R> Mc2Fuzzer<R> {
         let mut last = current_time();
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
 
-        while (!state.terminate_search()) {
+        while !state.terminate_search() {
             let (group_index, w_l) = state.find_group();
 
             state.split_group(group_index);
@@ -68,7 +68,7 @@ impl<R> Mc2Fuzzer<R> {
                 executor,
                 state,
                 manager,
-            );
+            )?;
 
             let z = if self.is_left {
                 (w_l + state.get_weight(group_index)) * (1.0 - self.p) + (1.0 - w_l) * self.p
@@ -91,12 +91,13 @@ impl<R> Mc2Fuzzer<R> {
         executor: &mut dummy_in_process_executor::DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
-    ) where
+    ) -> Result<(), Error>
+    where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
         OT: libafl::observers::ObserversTuple<Mc2State<R>>,
         R: Rand,
     {
-        self.counting_helper(i_l, executor, state, manager);
+        self.counting_helper(i_l, executor, state, manager)?;
         let mut i_l_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = self.compute_prob(val);
@@ -105,7 +106,7 @@ impl<R> Mc2Fuzzer<R> {
             }
         }
 
-        self.counting_helper(i_r, executor, state, manager);
+        self.counting_helper(i_r, executor, state, manager)?;
         let mut i_r_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
             let tmp_count = self.compute_prob(val);
@@ -115,6 +116,7 @@ impl<R> Mc2Fuzzer<R> {
         }
 
         self.is_left = i_l_count >= i_r_count;
+        Ok(())
     }
 
     fn counting_helper<H, OT: libafl::observers::ObserversTuple<Mc2State<R>>, MT>(
@@ -123,7 +125,8 @@ impl<R> Mc2Fuzzer<R> {
         executor: &mut dummy_in_process_executor::DummyInProcessExecutor<H, OT, Mc2State<R>>,
         state: &mut Mc2State<R>,
         manager: &mut SimpleEventManager<MT, Mc2State<R>>,
-    ) where
+    ) -> Result<(), Error>
+    where
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
         R: Rand,
     {
@@ -140,8 +143,10 @@ impl<R> Mc2Fuzzer<R> {
             }
 
             let input = BytesInput::new(tmp_input);
-            executor.run_target(self, state, manager, &input);
+            executor.run_target(self, state, manager, &input)?;
         }
+
+        Ok(())
     }
 
     fn compute_prob(&mut self, val: &BranchCmp) -> f64 {

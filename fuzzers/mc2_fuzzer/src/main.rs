@@ -299,7 +299,9 @@ fn main() {
         DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
             .expect("Failed to create the Executor");
 
-    fuzzer.fuzz_loop(&mut executor, &mut state, &mut mgr);
+    fuzzer
+        .fuzz_loop(&mut executor, &mut state, &mut mgr)
+        .unwrap();
 
     if let Some(promising_hyperrectangles) = state.get_solutions() {
         println!("--- Most Promising Input Region ----");
