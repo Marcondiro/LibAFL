@@ -28,7 +28,7 @@ lazy_static! {
 }
 
 const BRANCH_FILE_NAME: &str = "branch_policy.txt";
-const INPUT_SIZE: usize = 2;
+const INPUT_SIZE: usize = 6;
 
 extern "C" {
     fn LLVMFuzzerTestOneInput(data: *const u8, size: usize) -> isize;
@@ -177,7 +177,7 @@ pub extern "C" fn log_func_f32(
     arg2: f32,
     cond_type: u8,
 ) -> bool {
-    log_funchelper(br_id, old_cond, arg1 as i128, arg2 as i128, cond_type)
+    log_funchelper(br_id, old_cond, arg1 as i64, arg2 as i64, cond_type)
 }
 
 #[no_mangle]
@@ -188,7 +188,7 @@ pub extern "C" fn log_func_f64(
     arg2: f64,
     cond_type: u8,
 ) -> bool {
-    log_funchelper(br_id, old_cond, arg1 as i128, arg2 as i128, cond_type)
+    log_funchelper(br_id, old_cond, arg1 as i64, arg2 as i64, cond_type)
 }
 
 fn log_funchelper<T>(br_id: u32, old_cond: bool, args0: T, args1: T, cond_type: u8) -> bool
@@ -278,12 +278,10 @@ fn read_branch_policy_file(file_name: &str) -> Result<(), String> {
                         println!("br_id: {}, direction: {}", br_id, direction);
 
                         // Insert the branch policy into the shared data structure
-                        BRANCH_POLICY.lock().unwrap().insert(
-                            br_id,
-                            BranchSequence {
-                                direction: direction,
-                            },
-                        );
+                        BRANCH_POLICY
+                            .lock()
+                            .unwrap()
+                            .insert(br_id, BranchSequence { direction });
                     } else {
                         return Err(format!("Missing word in line: {}", line));
                     }
