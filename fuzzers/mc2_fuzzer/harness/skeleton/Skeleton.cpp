@@ -19,6 +19,15 @@
 using namespace llvm;
 
 namespace {
+struct CaseExpr {
+  ConstantInt *Val;
+  BasicBlock  *BB;
+  CaseExpr(ConstantInt *val = nullptr, BasicBlock *bb = nullptr)
+      : Val(val), BB(bb) {
+  }
+};
+using CaseVector = std::vector<CaseExpr>;
+
 struct SkeletonPass : public ModulePass {
   static char ID;
   SkeletonPass() : ModulePass(ID) {
@@ -26,7 +35,14 @@ struct SkeletonPass : public ModulePass {
 
   virtual void getAnalysisUsage(AnalysisUsage &AU) const override;
   virtual bool runOnModule(Module &F) override;
+
+ private:
+  bool        splitSwitches(Module &M);
+  BasicBlock *switchConvert(CaseVector Cases, std::vector<bool> bytesChecked,
+                            BasicBlock *OrigBlock, BasicBlock *NewDefault,
+                            Value *Val, unsigned level);
 };
+
 }  // namespace
 void SkeletonPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
@@ -81,6 +97,8 @@ bool SkeletonPass::runOnModule(Module &M) {
       M.getOrInsertFunction("switch_func", Int64Ty, Int32Ty, Int64Ty);
   // END DEAD CODE
   // --------------------------------------------------------
+
+  splitSwitches(M);
 
   // Initialize a counter to keep track of the number of branches in the
   // module
@@ -472,6 +490,249 @@ bool SkeletonPass::runOnModule(Module &M) {
   }
   // END DEAD CODE
   // --------------------------------------------------------
+  return true;
+}
+
+/* switchConvert - Transform simple list of Cases into list of CaseRange's */
+BasicBlock *SkeletonPass::switchConvert(CaseVector        Cases,
+                                        std::vector<bool> bytesChecked,
+                                        BasicBlock       *OrigBlock,
+                                        BasicBlock *NewDefault, Value *Val,
+                                        unsigned level) {
+  unsigned     ValTypeBitWidth = Cases[0].Val->getBitWidth();
+  IntegerType *ValType =
+      IntegerType::get(OrigBlock->getContext(), ValTypeBitWidth);
+  IntegerType         *ByteType = IntegerType::get(OrigBlock->getContext(), 8);
+  unsigned             BytesInValue = bytesChecked.size();
+  std::vector<uint8_t> setSizes;
+  std::vector<std::set<uint8_t> > byteSets(BytesInValue, std::set<uint8_t>());
+
+  /* for each of the possible cases we iterate over all bytes of the values
+   * build a set of possible values at each byte position in byteSets */
+  for (CaseExpr &Case : Cases) {
+    for (unsigned i = 0; i < BytesInValue; i++) {
+      uint8_t byte = (Case.Val->getZExtValue() >> (i * 8)) & 0xFF;
+      byteSets[i].insert(byte);
+    }
+  }
+
+  /* find the index of the first byte position that was not yet checked. then
+   * save the number of possible values at that byte position */
+  unsigned smallestIndex = 0;
+  unsigned smallestSize = 257;
+  for (unsigned i = 0; i < byteSets.size(); i++) {
+    if (bytesChecked[i]) continue;
+    if (byteSets[i].size() < smallestSize) {
+      smallestIndex = i;
+      smallestSize = byteSets[i].size();
+    }
+  }
+
+  assert(bytesChecked[smallestIndex] == false);
+
+  /* there are only smallestSize different bytes at index smallestIndex */
+
+  Instruction *Shift, *Trunc;
+  Function    *F = OrigBlock->getParent();
+  BasicBlock  *NewNode = BasicBlock::Create(Val->getContext(), "NodeBlock", F);
+  Shift = BinaryOperator::Create(Instruction::LShr, Val,
+                                 ConstantInt::get(ValType, smallestIndex * 8));
+#if LLVM_VERSION_MAJOR >= 16
+  Shift->insertInto(NewNode, NewNode->end());
+#else
+  NewNode->getInstList().push_back(Shift);
+#endif
+
+  if (ValTypeBitWidth > 8) {
+    Trunc = new TruncInst(Shift, ByteType);
+#if LLVM_VERSION_MAJOR >= 16
+    Trunc->insertInto(NewNode, NewNode->end());
+#else
+    NewNode->getInstList().push_back(Trunc);
+#endif
+  } else {
+    /* not necessary to trunc */
+    Trunc = Shift;
+  }
+
+  /* this is a trivial case, we can directly check for the byte,
+   * if the byte is not found go to default. if the byte was found
+   * mark the byte as checked. if this was the last byte to check
+   * we can finally execute the block belonging to this case */
+
+  if (smallestSize == 1) {
+    uint8_t byte = *(byteSets[smallestIndex].begin());
+
+    /* insert instructions to check whether the value we are switching on is
+     * equal to byte */
+    ICmpInst *Comp =
+        new ICmpInst(ICmpInst::ICMP_EQ, Trunc, ConstantInt::get(ByteType, byte),
+                     "byteMatch");
+#if LLVM_VERSION_MAJOR >= 16
+    Comp->insertInto(NewNode, NewNode->end());
+#else
+    NewNode->getInstList().push_back(Comp);
+#endif
+
+    bytesChecked[smallestIndex] = true;
+    bool allBytesAreChecked = true;
+
+    for (std::vector<bool>::iterator BCI = bytesChecked.begin(),
+                                     E = bytesChecked.end();
+         BCI != E; ++BCI) {
+      if (!*BCI) {
+        allBytesAreChecked = false;
+        break;
+      }
+    }
+
+    //    if (std::all_of(bytesChecked.begin(), bytesChecked.end(),
+    //                    [](bool b) { return b; })) {
+
+    if (allBytesAreChecked) {
+      assert(Cases.size() == 1);
+      BranchInst::Create(Cases[0].BB, NewDefault, Comp, NewNode);
+
+      /* we have to update the phi nodes! */
+      for (BasicBlock::iterator I = Cases[0].BB->begin();
+           I != Cases[0].BB->end(); ++I) {
+        if (!isa<PHINode>(&*I)) { continue; }
+        PHINode *PN = cast<PHINode>(I);
+
+        /* Only update the first occurrence. */
+        unsigned Idx = 0, E = PN->getNumIncomingValues();
+        for (; Idx != E; ++Idx) {
+          if (PN->getIncomingBlock(Idx) == OrigBlock) {
+            PN->setIncomingBlock(Idx, NewNode);
+            break;
+          }
+        }
+      }
+    } else {
+      BasicBlock *BB = switchConvert(Cases, bytesChecked, OrigBlock, NewDefault,
+                                     Val, level + 1);
+      BranchInst::Create(BB, NewDefault, Comp, NewNode);
+    }
+  }
+  /* there is no byte which we can directly check on, split the tree */
+  else {
+    std::vector<uint8_t> byteVector;
+    std::copy(byteSets[smallestIndex].begin(), byteSets[smallestIndex].end(),
+              std::back_inserter(byteVector));
+    std::sort(byteVector.begin(), byteVector.end());
+    uint8_t pivot = byteVector[byteVector.size() / 2];
+
+    /* we already chose to divide the cases based on the value of byte at
+     * index smallestIndex the pivot value determines the threshold for the
+     * decicion; if a case value is smaller at this byte index move it to the
+     * LHS vector, otherwise to the RHS vector */
+    CaseVector LHSCases, RHSCases;
+
+    for (CaseExpr &Case : Cases) {
+      uint8_t byte = (Case.Val->getZExtValue() >> (smallestIndex * 8)) & 0xFF;
+      if (byte < pivot) {
+        LHSCases.push_back(Case);
+      } else {
+        RHSCases.push_back(Case);
+      }
+    }
+
+    BasicBlock *LBB, *RBB;
+    LBB = switchConvert(LHSCases, bytesChecked, OrigBlock, NewDefault, Val,
+                        level + 1);
+    RBB = switchConvert(RHSCases, bytesChecked, OrigBlock, NewDefault, Val,
+                        level + 1);
+
+    /* insert instructions to check whether the value we are switching on is
+     * equal to byte */
+    ICmpInst *Comp =
+        new ICmpInst(ICmpInst::ICMP_ULT, Trunc,
+                     ConstantInt::get(ByteType, pivot), "byteMatch");
+#if LLVM_VERSION_MAJOR >= 16
+    Comp->insertInto(NewNode, NewNode->end());
+#else
+    NewNode->getInstList().push_back(Comp);
+#endif
+    BranchInst::Create(LBB, RBB, Comp, NewNode);
+  }
+
+  return NewNode;
+}
+
+bool SkeletonPass::splitSwitches(Module &M) {
+  LLVMContext              &C = M.getContext();
+  std::vector<SwitchInst *> switches;
+
+  /* iterate over all functions, bbs and instruction and add
+   * all switches to switches vector for later processing */
+  for (auto &F : M) {
+    for (auto &BB : F) {
+      SwitchInst *switchInst = nullptr;
+
+      if ((switchInst = dyn_cast<SwitchInst>(BB.getTerminator()))) {
+        // if (switchInst->getNumCases() < 1) continue;
+        switches.push_back(switchInst);
+      }
+    }
+  }
+
+  // if (!switches.size()) return false;
+  for (auto &SI : switches) {
+    BasicBlock *CurBlock = SI->getParent();
+    BasicBlock *OrigBlock = CurBlock;
+    Function   *F = CurBlock->getParent();
+    /* this is the value we are switching on */
+    Value      *Val = SI->getCondition();
+    BasicBlock *Default = SI->getDefaultDest();
+    unsigned    bitw = Val->getType()->getIntegerBitWidth();
+
+    /* Create a new, empty default block so that the new hierarchy of
+     * if-then statements go to this and the PHI nodes are happy.
+     * if the default block is set as an unreachable we avoid creating one
+     * because will never be a valid target.*/
+    BasicBlock *NewDefault = nullptr;
+    NewDefault = BasicBlock::Create(SI->getContext(), "NewDefault", F, Default);
+    BranchInst::Create(Default, NewDefault);
+
+    /* Prepare cases vector. */
+    CaseVector Cases;
+    for (SwitchInst::CaseIt i = SI->case_begin(), e = SI->case_end(); i != e;
+         ++i)
+      Cases.push_back(CaseExpr(i->getCaseValue(), i->getCaseSuccessor()));
+    /* bugfix thanks to pbst
+     * round up bytesChecked (in case getBitWidth() % 8 != 0) */
+    std::vector<bool> bytesChecked((7 + Cases[0].Val->getBitWidth()) / 8,
+                                   false);
+    BasicBlock       *SwitchBlock =
+        switchConvert(Cases, bytesChecked, OrigBlock, NewDefault, Val, 0);
+
+    /* Branch to our shiny new if-then stuff... */
+    BranchInst::Create(SwitchBlock, OrigBlock);
+
+    /* We are now done with the switch instruction, delete it. */
+#if LLVM_VERSION_MAJOR >= 16
+    SI->eraseFromParent();
+#else
+    CurBlock->getInstList().erase(SI);
+#endif
+
+    /* we have to update the phi nodes! */
+    for (BasicBlock::iterator I = Default->begin(); I != Default->end(); ++I) {
+      if (!isa<PHINode>(&*I)) { continue; }
+      PHINode *PN = cast<PHINode>(I);
+
+      /* Only update the first occurrence. */
+      unsigned Idx = 0, E = PN->getNumIncomingValues();
+      for (; Idx != E; ++Idx) {
+        if (PN->getIncomingBlock(Idx) == OrigBlock) {
+          PN->setIncomingBlock(Idx, NewDefault);
+          break;
+        }
+      }
+    }
+  }
+
+  // verifyModule(M);
   return true;
 }
 
