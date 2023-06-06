@@ -83,7 +83,7 @@ bool SkeletonPass::runOnModule(Module &M) {
   LogFunc[3] = M.getOrInsertFunction("log_func64", Int1Ty, Int32Ty, Int1Ty,
                                      Int64Ty, Int64Ty, Int8Ty, Int8Ty);
 
-  // Support for FLoating point comparison
+  // Support for Floating point comparison
   FunctionCallee LogFloatFunc[2];
   LogFloatFunc[0] = M.getOrInsertFunction("log_func_f32", Int1Ty, Int32Ty,
                                           Int1Ty, FloatTy, FloatTy, Int8Ty);
@@ -354,7 +354,7 @@ bool SkeletonPass::runOnModule(Module &M) {
                   break;
                 case FCmpInst::FCMP_OGT:
                   true_cond = "FCMP_OGT";
-                  false_cond = "FCMP_OGE || FCMP_OLT";
+                  false_cond = "FCMP_OLE";
                   break;
                 case FCmpInst::FCMP_OGE:
                   true_cond = "FCMP_OGE";
@@ -490,6 +490,8 @@ bool SkeletonPass::runOnModule(Module &M) {
   }
   // END DEAD CODE
   // --------------------------------------------------------
+
+  BranchesFile.close();
   return true;
 }
 
