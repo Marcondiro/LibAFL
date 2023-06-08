@@ -19,6 +19,24 @@ fn main() {
         .status()
         .expect("failed to execute make build");
 
+    //Save .bc in text format for switch splitting debugging
+    Command::new("clang-11")
+        .current_dir("./harness")
+        .arg("-Xclang")
+        .arg("-load")
+        .arg("-Xclang")
+        .arg("build/skeleton/libSkeletonPass.so")
+        .arg("harness.c")
+        .arg("-emit-llvm")
+        .arg("-S")
+        .arg("-g3")
+        .arg("-O0")
+        .arg("-c")
+        .arg("-o")
+        .arg("harness.bc")
+        .output()
+        .expect("Failed to produce harness.bc");
+
     cc::Build::new()
         .flag("-Xclang")
         .flag("-load")
@@ -28,7 +46,7 @@ fn main() {
         .flag("-g3")
         .flag("-O0")
         .compile("harness");
-    
+
     println!("cargo:rerun-if-changed=harness/harness.c");
     println!("cargo:rerun-if-changed=harness/skeleton/skeleton.cpp");
 }
