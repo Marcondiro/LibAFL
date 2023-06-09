@@ -1,5 +1,5 @@
 use crate::dummy_in_process_executor;
-use crate::mc2_state::*;
+use crate::mc2_state::{Hyperrectangle, Mc2State};
 use crate::BranchCmp;
 use crate::Predicate;
 use crate::BRANCH_CMP;
@@ -100,7 +100,7 @@ impl<R> Mc2Fuzzer<R> {
         self.counting_helper(i_l, executor, state, manager)?;
         let mut i_l_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
-            let tmp_count = self.compute_prob(val);
+            let tmp_count = Mc2Fuzzer::<R>::compute_prob(val);
             if i_l_count > tmp_count {
                 i_l_count = tmp_count;
             }
@@ -109,7 +109,7 @@ impl<R> Mc2Fuzzer<R> {
         self.counting_helper(i_r, executor, state, manager)?;
         let mut i_r_count = 1.0;
         for val in BRANCH_CMP.lock().unwrap().values() {
-            let tmp_count = self.compute_prob(val);
+            let tmp_count = Mc2Fuzzer::<R>::compute_prob(val);
             if i_r_count > tmp_count {
                 i_r_count = tmp_count;
             }
@@ -135,6 +135,7 @@ impl<R> Mc2Fuzzer<R> {
         for _ in 0..EXECUTION_NUMBER {
             let mut tmp_input = Vec::new();
             for i in 0..h.intervals.len() {
+                #[allow(clippy::cast_possible_truncation)]
                 tmp_input.push(
                     (state.get_rand_byte() as u16
                         % (h.intervals[i].high as u16 - h.intervals[i].low as u16 + 1)
@@ -149,55 +150,60 @@ impl<R> Mc2Fuzzer<R> {
         Ok(())
     }
 
-    fn compute_prob(&mut self, val: &BranchCmp) -> f64 {
-        if val.sat > 0 {
-            return val.sat as f64 / val.count as f64;
+    fn compute_prob(branch_compare: &BranchCmp) -> f64 {
+        if branch_compare.sat > 0 {
+            return branch_compare.sat as f64 / branch_compare.count as f64;
         }
 
-        let m = val.mean;
-        let var = if val.count == 1 {
+        let m = branch_compare.mean;
+        let variance = if branch_compare.count == 1 {
             0.0
         } else {
-            val.m2 / val.count as f64
+            branch_compare.m2 / branch_compare.count as f64
         };
 
         // integer only for now
-        let shift = if true { 1.0 } else { f64::MIN_POSITIVE };
+        let shift = 1.0; //if true { 1.0 } else { f64::MIN_POSITIVE };
 
         // was present in the prototype, but it's never used (?)
         // let epsilon = 0.001; // 10^-3
 
-        let ratio = match val.typ {
-            Predicate::FcmpOeq | Predicate::FcmpUeq | Predicate::IcmpEq => {
-                /* equal */
-                var / (var + m * m)
+        let ratio = match branch_compare.typ {
+            Predicate::FcmpOeq
+            | Predicate::FcmpUeq
+            | Predicate::IcmpEq
+            | Predicate::FcmpOge
+            | Predicate::FcmpUge
+            | Predicate::IcmpSge
+            | Predicate::IcmpUge => {
+                /* equal, unsigned greater or equal */
+                variance / (variance + m * m)
             }
             Predicate::FcmpOne | Predicate::FcmpUne | Predicate::IcmpNe => {
                 /* not equal */
-                let ratio1 = var / (var + (m - shift) * (m - shift));
-                let ratio2 = var / (var + (m + shift) * (m + shift));
+                let ratio1 = variance / (variance + (m - shift) * (m - shift));
+                let ratio2 = variance / (variance + (m + shift) * (m + shift));
                 ratio1 + ratio2
             }
             Predicate::FcmpOgt | Predicate::FcmpUgt | Predicate::IcmpSgt | Predicate::IcmpUgt => {
                 /* unsigned greater than */
-                var / (var + (m - shift) * (m - shift))
+                variance / (variance + (m - shift) * (m - shift))
             }
-            Predicate::FcmpOge | Predicate::FcmpUge | Predicate::IcmpSge | Predicate::IcmpUge => {
-                /* unsigned greater or equal */
-                var / (var + m * m)
-            }
-            Predicate::FcmpOlt | Predicate::FcmpUlt | Predicate::IcmpSlt | Predicate::IcmpUlt => {
-                /* unsigned less than */
-                var / (var + (m + shift) * (m + shift))
-            }
-            Predicate::FcmpOle | Predicate::FcmpUle | Predicate::IcmpSle | Predicate::IcmpUle => {
-                /* unsigned less or equal */
-                var / (var + (m + shift) * (m + shift))
+            Predicate::FcmpOlt
+            | Predicate::FcmpUlt
+            | Predicate::IcmpSlt
+            | Predicate::IcmpUlt
+            | Predicate::FcmpOle
+            | Predicate::FcmpUle
+            | Predicate::IcmpSle
+            | Predicate::IcmpUle => {
+                /* unsigned less or equal, unsigned less than */
+                variance / (variance + (m + shift) * (m + shift))
             }
             _ => 0.0,
         };
         assert!(ratio >= 0.0);
         assert!(ratio <= 1.0);
-        return ratio;
+        ratio
     }
 }

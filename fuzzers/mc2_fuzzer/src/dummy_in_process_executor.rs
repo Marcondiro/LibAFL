@@ -68,9 +68,9 @@ where
 {
     fn run_target(
         &mut self,
-        fuzzer: &mut Z,
-        state: &mut Self::State,
-        mgr: &mut EM,
+        _: &mut Z,
+        _: &mut Self::State,
+        _: &mut EM,
         input: &Self::Input,
     ) -> Result<ExitKind, Error> {
         Ok((self.harness_fn)(input))
@@ -123,17 +123,5 @@ where
             observers,
             phantom: PhantomData,
         })
-    }
-
-    /// Retrieve the harness function.
-    #[inline]
-    pub fn harness(&self) -> &H {
-        self.harness_fn
-    }
-
-    /// Retrieve the harness function for a mutable reference.
-    #[inline]
-    pub fn harness_mut(&mut self) -> &mut H {
-        self.harness_fn
     }
 }

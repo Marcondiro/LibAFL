@@ -222,6 +222,7 @@ where
             },
         );
 
+        #[allow(clippy::cast_possible_truncation)]
         let m = ((target_group.h.intervals[dim].high as u16
             + target_group.h.intervals[dim].low as u16)
             / 2) as u8;
@@ -244,7 +245,7 @@ where
     pub fn update_weights(&mut self, group_index: usize, p: f64, z: f64, is_left: bool) {
         assert!(group_index < self.weighted_groups.len());
 
-        for i in 0..(group_index + 1) {
+        for i in 0..=group_index {
             if is_left {
                 self.weighted_groups[i].weight *= (1.0 - p) / z;
             } else {

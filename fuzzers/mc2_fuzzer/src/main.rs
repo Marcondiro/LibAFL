@@ -114,10 +114,11 @@ pub extern "C" fn log_func8(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    if is_signed != 0 {
-        log_funchelper(br_id, old_cond, arg1 as i8, arg2 as i8, cond_type)
-    } else {
+    if is_signed == 0 {
         log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    } else {
+        #[allow(clippy::cast_possible_wrap)]
+        log_funchelper(br_id, old_cond, arg1 as i8, arg2 as i8, cond_type)
     }
 }
 
@@ -130,10 +131,11 @@ pub extern "C" fn log_func16(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    if is_signed != 0 {
-        log_funchelper(br_id, old_cond, arg1 as i16, arg2 as i16, cond_type)
-    } else {
+    if is_signed == 0 {
         log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    } else {
+        #[allow(clippy::cast_possible_wrap)]
+        log_funchelper(br_id, old_cond, arg1 as i16, arg2 as i16, cond_type)
     }
 }
 
@@ -146,10 +148,11 @@ pub extern "C" fn log_func32(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    if is_signed != 0 {
-        log_funchelper(br_id, old_cond, arg1 as i32, arg2 as i32, cond_type)
-    } else {
+    if is_signed == 0 {
         log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    } else {
+        #[allow(clippy::cast_possible_wrap)]
+        log_funchelper(br_id, old_cond, arg1 as i32, arg2 as i32, cond_type)
     }
 }
 
@@ -162,10 +165,11 @@ pub extern "C" fn log_func64(
     is_signed: u8,
     cond_type: u8,
 ) -> bool {
-    if is_signed != 0 {
-        log_funchelper(br_id, old_cond, arg1 as i64, arg2 as i64, cond_type)
-    } else {
+    if is_signed == 0 {
         log_funchelper(br_id, old_cond, arg1, arg2, cond_type)
+    } else {
+        #[allow(clippy::cast_possible_wrap)]
+        log_funchelper(br_id, old_cond, arg1 as i64, arg2 as i64, cond_type)
     }
 }
 
@@ -252,42 +256,38 @@ fn read_branch_policy_file(file_name: &str) -> Result<(), String> {
         let reader = BufReader::new(file);
 
         // Read each line in the file
-        for line in reader.lines() {
-            // Attempt to read the line
-            if let Ok(line) = line {
-                let mut parts = line.split_whitespace();
+        for line in reader.lines().flatten() {
+            let mut parts = line.split_whitespace();
 
-                // Extract the number from the line
-                if let Some(number_str) = parts.next() {
-                    // Extract the word from the line
-                    if let Some(word) = parts.next() {
-                        // Parse the number as u32
-                        let br_id = match number_str.parse::<u32>() {
-                            Ok(num) => num,
-                            Err(_) => return Err(format!("Invalid number in line: {}", line)),
-                        };
+            // Extract the number from the line
+            if let Some(number_str) = parts.next() {
+                // Extract the word from the line
+                if let Some(word) = parts.next() {
+                    // Parse the number as u32
+                    let Ok(br_id) = number_str.parse::<u32>() else {
+                        return Err(format!("Invalid number in line: {line}"))
+                    };
 
-                        // Determine the direction based on the word
-                        let direction = match word {
-                            "true" => true,
-                            "false" => false,
-                            _ => return Err(format!("Invalid word in line: {}", line)),
-                        };
+                    // Determine the direction based on the word
+                    let direction = match word {
+                        "true" => true,
+                        "false" => false,
+                        _ => return Err(format!("Invalid word in line: {line}")),
+                    };
 
-                        // Print the extracted values
-                        println!("br_id: {}, direction: {}", br_id, direction);
+                    // Print the extracted values
+                    println!("br_id: {br_id}, direction: {direction}");
 
-                        // Insert the branch policy into the shared data structure
-                        BRANCH_POLICY
-                            .lock()
-                            .unwrap()
-                            .insert(br_id, BranchSequence { direction });
-                    } else {
-                        return Err(format!("Missing word in line: {}", line));
-                    }
+                    // Insert the branch policy into the shared data structure
+                    BRANCH_POLICY
+                        .lock()
+                        .unwrap()
+                        .insert(br_id, BranchSequence { direction });
                 } else {
-                    return Err(format!("Missing number in line: {}", line));
+                    return Err(format!("Missing word in line: {line}"));
                 }
+            } else {
+                return Err(format!("Missing number in line: {line}"));
             }
         }
         Ok(())
@@ -325,6 +325,6 @@ fn main() {
 
     if let Some(promising_hyperrectangles) = state.get_solutions() {
         println!("--- Most Promising Input Region ----");
-        println!("{:?}", promising_hyperrectangles);
+        println!("{promising_hyperrectangles:?}");
     }
 }
