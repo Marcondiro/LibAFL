@@ -1,6 +1,8 @@
-use core::{fmt::Debug, marker::PhantomData, time::Duration};
-use serde::{Deserialize, Serialize};
 use ansi_term::Color;
+use core::{fmt::Debug, marker::PhantomData, time::Duration};
+use f128::f128;
+use serde::{Deserialize, Serialize};
+use std::ops::MulAssign;
 
 use libafl::{
     bolts::{
@@ -166,17 +168,17 @@ where
      * found by the fuzz_loop
      */
     pub fn terminate_search(&mut self) -> bool {
-        let threshold = 1.0 / f64::sqrt((self.input_size * 8) as f64);
+        let threshold = f128::new(1.0 / f64::sqrt((self.input_size * 8) as f64));
 
         for group in &self.weighted_groups {
-            let mut cardinality = 1;
+            let mut cardinality: f128 = f128::new(1);
             for j in 0..self.input_size {
                 let interval = group.hyperrectangle.intervals[j];
                 // TODO : this lead to overflow when the input space is big
-                cardinality *= (interval.high - interval.low) as u128 + 1;
+                cardinality.mul_assign(f128::new((interval.high - interval.low) as u16 + 1));
             }
 
-            if threshold < (group.weight / cardinality as f64) {
+            if threshold < (f128::new(group.weight) / cardinality) {
                 // add the solution to the state
                 self.solutions = Some(group.hyperrectangle.clone());
                 return true;

@@ -1,3 +1,4 @@
+use ansi_term::Color;
 use lazy_static::lazy_static;
 use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
@@ -5,7 +6,6 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
-use ansi_term::Color;
 
 use core::fmt::Debug;
 
@@ -54,7 +54,7 @@ lazy_static! {
 }
 
 const BRANCH_FILE_NAME: &str = "branch_policy.txt";
-const INPUT_SIZE: usize = 6;
+const INPUT_SIZE: usize = 10000;
 
 /* function under test */
 extern "C" {
@@ -369,7 +369,10 @@ fn main() {
         .unwrap();
 
     if let Some(promising_hyperrectangles) = state.get_solutions() {
-        println!("{}",Color::Blue.paint("--- Most Promising Input Region ----"));
-        mc2_state:: print_hyperrectangle(promising_hyperrectangles)
+        println!(
+            "{}",
+            Color::Blue.paint("--- Most Promising Input Region ----")
+        );
+        mc2_state::print_hyperrectangle(promising_hyperrectangles)
     }
 }
