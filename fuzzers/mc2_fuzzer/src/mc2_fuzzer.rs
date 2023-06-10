@@ -149,7 +149,6 @@ impl<R> Mc2Fuzzer<R> {
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
         R: Rand,
     {
-
         // Clear the global data structure to store the statistics
         // for the current execution
         BRANCH_CMP.lock().unwrap().clear();

@@ -1,5 +1,6 @@
 use core::{fmt::Debug, marker::PhantomData, time::Duration};
 use serde::{Deserialize, Serialize};
+use ansi_term::Color;
 
 use libafl::{
     bolts::{
@@ -192,8 +193,8 @@ where
     }
 
     /**
-     * This function select the group to split at the current iteration 
-     * of the fuzz_loop. 
+     * This function select the group to split at the current iteration
+     * of the fuzz_loop.
      */
     pub fn find_group(&self) -> (usize, f64) {
         let mut cumulative_weight: f64 = 0.0;
@@ -225,14 +226,18 @@ where
         // Find the first dimension where the high and low boundaries are
         // different
         while dim < target_group.hyperrectangle.intervals.len()
-            && target_group.hyperrectangle.intervals[dim].high == target_group.hyperrectangle.intervals[dim].low
+            && target_group.hyperrectangle.intervals[dim].high
+                == target_group.hyperrectangle.intervals[dim].low
         {
             dim += 1;
         }
 
         // If the dim == intervals.len, then there are no intervals to split
         // TODO : handle this case
-        assert!(dim < target_group.hyperrectangle.intervals.len(),"No intervals to split");
+        assert!(
+            dim < target_group.hyperrectangle.intervals.len(),
+            "No intervals to split"
+        );
 
         self.weighted_groups.insert(
             group_index,
@@ -248,7 +253,10 @@ where
             + target_group.hyperrectangle.intervals[dim].low as u16)
             / 2) as u8;
         self.weighted_groups[group_index].hyperrectangle.intervals[dim].high = m;
-        self.weighted_groups[group_index + 1].hyperrectangle.intervals[dim].low = m + 1;
+        self.weighted_groups[group_index + 1]
+            .hyperrectangle
+            .intervals[dim]
+            .low = m + 1;
     }
 
     /**
@@ -298,6 +306,19 @@ where
 
     pub fn get_rand_byte(&mut self) -> u8 {
         self.rand.next() as u8
+    }
+}
+
+pub fn print_hyperrectangle(hyperrectangle: &Hyperrectangle) {
+    println!("{}", Color::Blue.paint("Hyperrectangle:\n"));
+    for interval in &hyperrectangle.intervals {
+        println!(
+            "{}",
+            Color::Green.paint(format!(
+                "\tlow: {:6}\t high: {:6}",
+                interval.low, interval.high
+            ))
+        );
     }
 }
 

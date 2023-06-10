@@ -116,7 +116,7 @@ where
     where
         Self: Executor<EM, Z, State = S>,
         EM: EventFirer<State = S> + EventRestarter,
-        Z: UsesState<State = S>, 
+        Z: UsesState<State = S>,
     {
         Ok(Self {
             harness_fn,

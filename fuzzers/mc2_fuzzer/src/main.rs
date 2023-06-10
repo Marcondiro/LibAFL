@@ -5,6 +5,7 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
+use ansi_term::Color;
 
 use core::fmt::Debug;
 
@@ -43,7 +44,6 @@ struct BranchCmp {
 struct BranchSequence {
     direction: bool,
 }
-
 
 /*
  * Global variables used by the Fuzzer and by the instrumentation of the harness
@@ -369,7 +369,7 @@ fn main() {
         .unwrap();
 
     if let Some(promising_hyperrectangles) = state.get_solutions() {
-        println!("--- Most Promising Input Region ----");
-        println!("{promising_hyperrectangles:?}");
+        println!("{}",Color::Blue.paint("--- Most Promising Input Region ----"));
+        mc2_state:: print_hyperrectangle(promising_hyperrectangles)
     }
 }
