@@ -18,6 +18,8 @@ pub struct Interval {
     pub high: u8,
 }
 
+// TODO : Consider embedding Hyperrectangle and Interval since we don't
+// need two data structures
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hyperrectangle {
     pub intervals: Vec<Interval>,
@@ -160,6 +162,10 @@ where
         }
     }
 
+    /**
+     * This function is used to decide if the most promising hyperrectangle has been
+     * found by the fuzz_loop
+     */
     pub fn terminate_search(&mut self) -> bool {
         let threshold = 1.0 / f64::sqrt((self.input_size * 8) as f64);
 
@@ -167,6 +173,7 @@ where
             let mut cardinality = 1;
             for j in 0..self.input_size {
                 let interval = group.h.intervals[j];
+                // TODO : this lead to overflow when the input space is big
                 cardinality *= (interval.high - interval.low) as u128 + 1;
             }
 
@@ -179,10 +186,17 @@ where
         false
     }
 
+    /**
+     * This function return the solution that is saved in the state
+     */
     pub fn get_solutions(&self) -> &Option<Hyperrectangle> {
         &self.solutions
     }
 
+    /**
+     * This function select the group to split at the current iteration 
+     * of the fuzz_loop. 
+     */
     pub fn find_group(&self) -> (usize, f64) {
         let mut cumulative_weight: f64 = 0.0;
         let mut group_index: usize = 0;
@@ -199,6 +213,9 @@ where
         (group_index, w_l)
     }
 
+    /**
+     * This function split the group at the given group index.
+     */
     pub fn split_group(&mut self, group_index: usize) {
         let target_group = self.weighted_groups[group_index].clone();
 
@@ -207,12 +224,17 @@ where
         };
 
         let mut dim = 0;
-        // TODO fix this to avoid dim == size
+        // Find the first dimension where the high and low boundaries are
+        // different
         while dim < target_group.h.intervals.len()
             && target_group.h.intervals[dim].high == target_group.h.intervals[dim].low
         {
             dim += 1;
         }
+
+        // If the dim == intervals.len, then there are no intervals to split
+        // TODO : handle this case
+        assert!(dim < target_group.h.intervals.len(),"No intervals to split");
 
         self.weighted_groups.insert(
             group_index,
@@ -222,6 +244,7 @@ where
             },
         );
 
+        // split the interval of the index_group over the old and new groups
         #[allow(clippy::cast_possible_truncation)]
         let m = ((target_group.h.intervals[dim].high as u16
             + target_group.h.intervals[dim].low as u16)
@@ -230,18 +253,31 @@ where
         self.weighted_groups[group_index + 1].h.intervals[dim].low = m + 1;
     }
 
+    /**
+     * This function retrieves the hyperrectangle for the group
+     * at the given group_index
+     */
     pub fn get_hyperrectangles(&self, group_index: usize) -> &Hyperrectangle {
         assert!(group_index < self.weighted_groups.len());
 
         &self.weighted_groups[group_index].h
     }
 
+    /**
+     * This function retrieves the weight of the group
+     * at the given group_index
+     */
     pub fn get_weight(&self, group_index: usize) -> f64 {
         assert!(group_index < self.weighted_groups.len());
 
         self.weighted_groups[group_index].weight
     }
 
+    /**
+     * This function update the weight of the group at the given group index
+     * using the information computed after the execution of the harness
+     * using the current group.
+     */
     pub fn update_weights(&mut self, group_index: usize, p: f64, z: f64, is_left: bool) {
         assert!(group_index < self.weighted_groups.len());
 
