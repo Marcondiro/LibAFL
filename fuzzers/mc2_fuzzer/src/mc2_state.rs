@@ -167,6 +167,7 @@ where
             let mut cardinality = 1;
             for j in 0..self.input_size {
                 let interval = group.h.intervals[j];
+                // TODO : this lead to overflow when the input space is big
                 cardinality *= (interval.high - interval.low) as u128 + 1;
             }
 

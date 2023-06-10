@@ -191,12 +191,18 @@ pub extern "C" fn log_func_f64(
     log_funchelper(br_id, old_cond, arg1 as i64, arg2 as i64, cond_type)
 }
 
+/**
+ * log_funchelper is called by the instrumentation of the harness, it is used to keep track of the branches that
+ * have been visited by the execution.
+ */
 fn log_funchelper<T>(br_id: u32, old_cond: bool, args0: T, args1: T, cond_type: u8) -> bool
 where
     i128: From<T>,
 {
     let mut ret_cond = old_cond;
 
+    // Checking if the condition is the desired one, otherwise change it in order to 
+    // visit branches that leads to the target 
     if let Some(bseq) = BRANCH_POLICY.lock().unwrap().get(&br_id) {
         ret_cond = bseq.direction;
     }
@@ -213,12 +219,18 @@ where
     ret_cond
 }
 
+
+/**
+ * Updates the statistical information contained in BRANCH_CMP data
+ *  structure for the current execution.
+ */
 fn update_branch<T>(br_id: u32, ret_cond: bool, is_sat: bool, args0: T, args1: T, cond_type: u8)
 where
     i128: From<T>,
 {
     assert!(cond_type > 0);
     let ret_cond_u32: u32 = ret_cond.into();
+    // is_sat is true if the condition is satisfied
     let is_sat_u64: u64 = is_sat.into();
 
     let args0_i = i128::from(args0);
@@ -246,6 +258,9 @@ where
         });
 }
 
+/**
+ * Just an utility function to read the policy from file
+ */
 fn read_branch_policy_file(file_name: &str) -> Result<(), String> {
     // Attempt to open the file
     if let Ok(file) = File::open(file_name) {
@@ -298,8 +313,11 @@ fn read_branch_policy_file(file_name: &str) -> Result<(), String> {
 }
 
 fn main() {
+    
+    // reading the branch policy from file
     read_branch_policy_file(BRANCH_FILE_NAME).unwrap();
 
+    // The function that we want to test
     let mut harness = |input: &BytesInput| {
         unsafe {
             LLVMFuzzerTestOneInput(input.bytes().as_ptr(), input.bytes().len());
@@ -307,18 +325,22 @@ fn main() {
         ExitKind::Ok
     };
 
+    // The state of the fuzzer
     let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), INPUT_SIZE);
 
     // TODO support tui as in BabyFuzzer ?
     let mon = SimpleMonitor::new(|s| println!("{s}"));
     let mut mgr = SimpleEventManager::new(mon);
 
+    // The fuzzer itself
     let mut fuzzer: Mc2Fuzzer<StdRand> = Mc2Fuzzer::new(0.01);
 
+    // The Executor of the function to be tested
     let mut executor =
         DummyInProcessExecutor::new(&mut harness, (), &mut fuzzer, &mut state, &mut mgr)
             .expect("Failed to create the Executor");
 
+    // The actual fuzzing
     fuzzer
         .fuzz_loop(&mut executor, &mut state, &mut mgr)
         .unwrap();

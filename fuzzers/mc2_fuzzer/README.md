@@ -1,5 +1,9 @@
 # MC2 Fuzzer
 
+## Notes :
+
+- `cond_type` is never used
+
 # Example 1 (TODO)
 
 ## Description

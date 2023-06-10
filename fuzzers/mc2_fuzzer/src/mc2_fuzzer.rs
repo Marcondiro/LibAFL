@@ -41,6 +41,9 @@ impl<R> Mc2Fuzzer<R> {
         }
     }
 
+    /**
+     * It is the actual core of the MC2 fuzzer
+     */
     pub fn fuzz_loop<H, OT: libafl::observers::ObserversTuple<Mc2State<R>>, MT>(
         &mut self,
         executor: &mut dummy_in_process_executor::DummyInProcessExecutor<H, OT, Mc2State<R>>,
@@ -52,16 +55,18 @@ impl<R> Mc2Fuzzer<R> {
         H: FnMut(&<Mc2State<R> as UsesInput>::Input) -> ExitKind + ?Sized,
         MT: Monitor,
     {
-        // noisy binary search
 
         let mut last = current_time();
         let monitor_timeout = STATS_TIMEOUT_DEFAULT;
 
         while !state.terminate_search() {
+            // find a group to split
             let (group_index, w_l) = state.find_group();
 
+            // split the group in two group of the same dimension
             state.split_group(group_index);
 
+            // Execute the harness 
             self.noisy_counting_oracle(
                 &state.get_hyperrectangles(group_index).clone(),
                 &state.get_hyperrectangles(group_index + 1).clone(),
@@ -70,20 +75,28 @@ impl<R> Mc2Fuzzer<R> {
                 manager,
             )?;
 
+            
             let z = if self.is_left {
                 (w_l + state.get_weight(group_index)) * (1.0 - self.p) + (1.0 - w_l) * self.p
             } else {
                 (w_l + state.get_weight(group_index)) * self.p + (1.0 - w_l) * (1.0 - self.p)
             };
 
-            state.update_weights(group_index, self.p, z, self.is_left);
 
+            // update the weight of the groups
+            state.update_weights(group_index, self.p, z, self.is_left);
+            
             last = manager.maybe_report_progress(state, last, monitor_timeout)?;
         }
 
         Ok(())
     }
 
+    /**
+     * This function executes the harness for two given hyperrecangle.
+     * After the counting_helper is called for each hyperrectangle, the 
+     * probability is computed for that branch.
+     */
     fn noisy_counting_oracle<H, OT, MT>(
         &mut self,
         i_l: &Hyperrectangle,
@@ -119,6 +132,13 @@ impl<R> Mc2Fuzzer<R> {
         Ok(())
     }
 
+    /**
+     * This function executes the haress for the given hyperrectangel.
+     * The harness is executed EXECUTION_NUMBER times in order to reduce
+     * the error of the sample mean an variance.
+     * For each execution, a random input sample is selected within the 
+     * given hyperrectangle.
+     */
     fn counting_helper<H, OT: libafl::observers::ObserversTuple<Mc2State<R>>, MT>(
         &mut self,
         h: &Hyperrectangle,
@@ -149,6 +169,11 @@ impl<R> Mc2Fuzzer<R> {
         Ok(())
     }
 
+    /**
+     * After the harness is executed several times (updating the BranchCmp data
+     * structure), this function is called to compute the probability that the current 
+     * hypperrectanle contains the target 
+     */
     fn compute_prob(&mut self, val: &BranchCmp) -> f64 {
         if val.sat > 0 {
             return val.sat as f64 / val.count as f64;

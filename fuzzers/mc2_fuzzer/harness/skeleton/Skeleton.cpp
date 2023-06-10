@@ -448,16 +448,18 @@ bool SkeletonPass::runOnModule(Module &M) {
               BranchesFile
                   << "ERROR" << br_inst->getCondition()->getName().str()
                   << " is not a ICMP nor FCMP but a conditional branch, "
-                     "likely logical operators\n";
+                     "likely logical operators\t";
               BranchesFile << "@@@ edge id (" << cur_br_id << "," << br_id_1
-                           << "), cond type non-ICMP \n";
+                           << "), cond type non-ICMP \t";
               BranchesFile << "@@@ edge id (" << cur_br_id << "," << br_id_2
-                           << "), cond type non-ICMP \n";
+                           << "), cond type non-ICMP \t";
               BranchesFile << "ERROR: not yet supported\n";
               assert(0);
             }
           }
         } else if (auto *sw_inst = dyn_cast<SwitchInst>(&I)) {
+          // this branch should never be reached since the switches
+          // have been replaced by if-else
           BranchesFile << "ERROR: not yet supported\n";
           assert(0);
         }
