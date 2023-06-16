@@ -151,6 +151,20 @@ bool SkeletonPass::runOnModule(Module &M) {
   for (auto &F : M) {
     for (auto &BB : F) {
       for (auto &I : BB) {
+        if (BranchInst *br_inst = dyn_cast<BranchInst>(&I)) {
+          if (!br_inst->isConditional()) continue;
+          if (isa<ICmpInst>(br_inst->getCondition())) continue;
+          if (isa<FCmpInst>(br_inst->getCondition())) continue;
+
+          Value      *cond = br_inst->getCondition();
+          IRBuilder<> IRB(br_inst);
+          Value      *comparison = IRB.CreateICmpNE(
+              cond, ConstantInt::get(cond->getType(), 0), "icmpResult");
+          br_inst->setCondition(comparison);
+        }
+      }
+
+      for (auto &I : BB) {
         // Retrieve the metadata previously attached about the id of the branch
         // (if any)
         if (MDNode *N = BB.getTerminator()->getMetadata("BB_ID")) {
@@ -454,7 +468,7 @@ bool SkeletonPass::runOnModule(Module &M) {
               BranchesFile << "@@@ edge id (" << cur_br_id << "," << br_id_2
                            << "), cond type non-ICMP \n";
               BranchesFile << "ERROR: not yet supported\n";
-              assert(0);
+              // assert(0);
             }
           }
         } else if (auto *sw_inst = dyn_cast<SwitchInst>(&I)) {
