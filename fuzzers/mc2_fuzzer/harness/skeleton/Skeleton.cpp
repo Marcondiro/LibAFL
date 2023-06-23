@@ -468,7 +468,6 @@ bool SkeletonPass::runOnModule(Module &M) {
               BranchesFile << "@@@ edge id (" << cur_br_id << "," << br_id_2
                            << "), cond type non-ICMP \n";
               BranchesFile << "ERROR: not yet supported\n";
-              // assert(0);
             }
           }
         } else if (auto *sw_inst = dyn_cast<SwitchInst>(&I)) {
