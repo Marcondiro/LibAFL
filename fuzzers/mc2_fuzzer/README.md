@@ -1,8 +1,65 @@
 # MC2 Fuzzer
 
-# Example 1 (TODO)
+### libxml2 compilation
 
-## Description
+installo go
+
+```sh
+wget https://dl.google.com/go/go1.20.5.linux-amd64.tar.gz
+tar -C /usr/local -xzf go1.20.5.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin
+```
+
+INSTALLATION OF GLLVM
+
+```sh
+# export GOPATH=/root/go
+export GOPATH=/go
+GO111MODULE=off go get github.com/SRI-CSL/gllvm/cmd/...
+export PATH=${GOPATH}/bin:${PATH}
+
+```
+
+Download libxml2
+
+```sh
+git clone https://github.com/GNOME/libxml2.git
+cd libxml2
+```
+
+Then inside the `lilbxml2/fuzz` folder, add a file main.c containing the following:
+
+```c
+int __attribute__((weak)) main() { return 0; }
+```
+
+Back to `libxml2/` run:
+
+```sh
+WLLVM_CONFIGURE_ONLY=1 CC=gclang CFLAGS='-g -O0' ./autogen.sh \
+    --disable-shared \
+    --without-debug \
+    --without-ftp \
+    --without-http \
+    --without-legacy \
+    --without-python
+
+cd fuzz
+make clean-corpus
+make fuzz.o
+make xml.o
+
+gclang -c main.c
+
+gclang++ -g -O0 xml.o fuzz.o main.o -o harness ../.libs/libxml2.a -Wl,-Bstatic -lz -llzma -Wl,-Bdynamic
+
+get-bc -o harness.bc harness
+
+```
+
+## Example 1 (TODO)
+
+### Description
 
 This is the very initial function that has been used to develop the fuzzer, it is very simple as it has only one branch instruction:
 
@@ -42,7 +99,7 @@ The output of the instrumentation can be used to ease this process:
 Here it's very easy, since there are only three basic block, we just need to chose the direction of the only branch `br_id = 0`.
 Thus we write in the `branch_policy.txt` the line `0 true` .
 
-# Example 2 (TODO)
+## Example 2 (TODO)
 
 The following function is more complex than the previous one because here we have three branch instruction:
 
