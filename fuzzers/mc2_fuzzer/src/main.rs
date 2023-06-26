@@ -54,7 +54,7 @@ lazy_static! {
 }
 
 const BRANCH_FILE_NAME: &str = "branch_policy.txt";
-const INPUT_SIZE: usize = 10000;
+const INPUT_SIZE: usize = 3;
 
 /* function under test */
 extern "C" {
