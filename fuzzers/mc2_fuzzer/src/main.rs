@@ -54,7 +54,7 @@ lazy_static! {
 }
 
 const BRANCH_FILE_NAME: &str = "branch_policy.txt";
-const INPUT_SIZE: usize = 2;
+const INPUT_SIZE: usize = 1;
 
 /* function under test */
 extern "C" {
@@ -351,7 +351,6 @@ fn main() {
     // The state of the fuzzer
     let mut state = mc2_state::Mc2State::new(StdRand::with_seed(42), INPUT_SIZE);
 
-    // TODO support tui as in BabyFuzzer ?
     let mon = SimpleMonitor::new(|s| println!("{s}"));
     let mut mgr = SimpleEventManager::new(mon);
 

@@ -174,7 +174,6 @@ where
             let mut cardinality: f128 = f128::new(1);
             for j in 0..self.input_size {
                 let interval = group.hyperrectangle.intervals[j];
-                // TODO : this lead to overflow when the input space is big
                 cardinality.mul_assign(f128::new((interval.high - interval.low) as u16 + 1));
             }
 
@@ -235,7 +234,6 @@ where
         }
 
         // If the dim == intervals.len, then there are no intervals to split
-        // TODO : handle this case
         assert!(
             dim < target_group.hyperrectangle.intervals.len(),
             "No intervals to split"
@@ -314,13 +312,7 @@ where
 pub fn print_hyperrectangle(hyperrectangle: &Hyperrectangle) {
     println!("{}", Color::Blue.paint("Hyperrectangle:\n"));
     for interval in &hyperrectangle.intervals {
-        println!(
-            "{}",
-            Color::Green.paint(format!(
-                "\tlow: {:6}\t high: {:6}",
-                interval.low, interval.high
-            ))
-        );
+        println!("\tlow: {:6}\t high: {:6}", interval.low, interval.high);
     }
 }
 

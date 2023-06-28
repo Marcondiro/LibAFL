@@ -4,24 +4,20 @@
 #include <stdio.h>
 
 int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
-  uint8_t arg0 = data[0];  // 1 byte
-  float   arg1 = data[1];  // 1 byte
-  uint8_t arg2 = data[2];  // 1 byte
+  uint8_t byte0 = data[0];  // 1 byte
 
   // to avoid unused variable compilation warnings
   (void)size;
 
-  printf("Hello from harness, I've received: [%u,%f, %d]\n", arg0, arg1, arg2);
+  printf("%d is input\n", byte0);
 
-  if (arg0 > 210) {
-    printf("[0] Took true direction!\n");
-    if (arg1 < 13.123) {
-      printf("[1] Took true direction!\n");
-    } else {
-      printf("[1] Took false direction!\n");
-    }
+  int sum = 0;
+  if (byte0 < 250) {
+    sum = byte0 + 0;
+    printf("Took true direction: %d is the result\n", sum);
   } else {
-    printf("[0] Took false direction!\n");
+    sum = byte0 - 15;
+    printf("Took false direction: %d is the result\n", sum);
   }
 
   return 0;
