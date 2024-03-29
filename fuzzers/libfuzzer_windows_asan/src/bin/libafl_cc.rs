@@ -1,6 +1,6 @@
 use std::env;
 
-use libafl_cc::{ClangWrapper, CompilerWrapper};
+use libafl_cc::{ClangWrapper, CompilerWrapper, ToolWrapper};
 
 pub fn main() {
     let args: Vec<String> = env::args().collect();
@@ -30,6 +30,7 @@ pub fn main() {
             .expect("Failed to parse the command line")
             .link_staticlib(&dir, "libfuzzer_windows_asan")
             .add_arg("-lOleAut32.lib")
+            .add_arg("-lntdll.lib")
             .add_arg("-fsanitize-coverage=trace-pc-guard")
             .add_arg("-fsanitize=address")
             .run()

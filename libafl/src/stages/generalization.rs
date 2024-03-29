@@ -6,25 +6,26 @@ use alloc::{
 };
 use core::{fmt::Debug, marker::PhantomData};
 
-#[cfg(feature = "introspection")]
-use crate::monitors::PerfFeature;
+use libafl_bolts::{AsSlice, Named};
+
 use crate::{
-    bolts::AsSlice,
-    corpus::{Corpus, CorpusId},
+    corpus::{Corpus, HasCurrentCorpusIdx},
     executors::{Executor, HasObservers},
     feedbacks::map::MapNoveltiesMetadata,
     inputs::{BytesInput, GeneralizedInputMetadata, GeneralizedItem, HasBytesVec, UsesInput},
     mark_feature_time,
     observers::{MapObserver, ObserversTuple},
-    stages::Stage,
+    stages::{RetryRestartHelper, Stage},
     start_timer,
-    state::{HasClientPerfMonitor, HasCorpus, HasExecutions, HasMetadata, UsesState},
+    state::{HasCorpus, HasExecutions, HasMetadata, HasNamedMetadata, UsesState},
     Error,
 };
+#[cfg(feature = "introspection")]
+use crate::{monitors::PerfFeature, state::HasClientPerfMonitor};
 
 const MAX_GENERALIZED_LEN: usize = 8192;
 
-fn increment_by_offset(_list: &[Option<u8>], idx: usize, off: u8) -> usize {
+const fn increment_by_offset(_list: &[Option<u8>], idx: usize, off: u8) -> usize {
     idx + 1 + off as usize
 }
 
@@ -46,6 +47,12 @@ pub struct GeneralizationStage<EM, O, OT, Z> {
     phantom: PhantomData<(EM, O, OT, Z)>,
 }
 
+impl<EM, O, OT, Z> Named for GeneralizationStage<EM, O, OT, Z> {
+    fn name(&self) -> &str {
+        "GeneralizationStage"
+    }
+}
+
 impl<EM, O, OT, Z> UsesState for GeneralizationStage<EM, O, OT, Z>
 where
     EM: UsesState,
@@ -59,11 +66,8 @@ where
     O: MapObserver,
     E: Executor<EM, Z> + HasObservers,
     E::Observers: ObserversTuple<E::State>,
-    E::State: UsesInput<Input = BytesInput>
-        + HasClientPerfMonitor
-        + HasExecutions
-        + HasMetadata
-        + HasCorpus,
+    E::State:
+        UsesInput<Input = BytesInput> + HasExecutions + HasMetadata + HasCorpus + HasNamedMetadata,
     EM: UsesState<State = E::State>,
     Z: UsesState<State = E::State>,
 {
@@ -75,8 +79,13 @@ where
         executor: &mut E,
         state: &mut E::State,
         manager: &mut EM,
-        corpus_idx: CorpusId,
     ) -> Result<(), Error> {
+        let Some(corpus_idx) = state.current_corpus_idx()? else {
+            return Err(Error::illegal_state(
+                "state is not currently processing a corpus index",
+            ));
+        };
+
         let (mut payload, original, novelties) = {
             start_timer!(state);
             {
@@ -99,6 +108,9 @@ where
                         "MapNoveltiesMetadata needed for GeneralizationStage not found in testcase #{corpus_idx} (check the arguments of MapFeedback::new(...))"
                     ))
                 })?;
+            if meta.as_slice().is_empty() {
+                return Ok(()); // don't generalise inputs which don't have novelties
+            }
             (payload, original, meta.as_slice().to_vec())
         };
 
@@ -305,6 +317,18 @@ where
 
         Ok(())
     }
+
+    #[inline]
+    fn restart_progress_should_run(&mut self, state: &mut Self::State) -> Result<bool, Error> {
+        // TODO: We need to be able to resume better if something crashes or times out
+        RetryRestartHelper::restart_progress_should_run(state, self, 3)
+    }
+
+    #[inline]
+    fn clear_restart_progress(&mut self, state: &mut Self::State) -> Result<(), Error> {
+        // TODO: We need to be able to resume better if something crashes or times out
+        RetryRestartHelper::clear_restart_progress(state, self)
+    }
 }
 
 impl<EM, O, OT, Z> GeneralizationStage<EM, O, OT, Z>
@@ -312,11 +336,7 @@ where
     EM: UsesState,
     O: MapObserver,
     OT: ObserversTuple<EM::State>,
-    EM::State: UsesInput<Input = BytesInput>
-        + HasClientPerfMonitor
-        + HasExecutions
-        + HasMetadata
-        + HasCorpus,
+    EM::State: UsesInput<Input = BytesInput> + HasExecutions + HasMetadata + HasCorpus,
 {
     /// Create a new [`GeneralizationStage`].
     #[must_use]

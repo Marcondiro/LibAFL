@@ -4,10 +4,10 @@ use alloc::vec::Vec;
 use core::cmp::max;
 
 use hashbrown::HashMap;
+use libafl_bolts::{rands::Rand, Named};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bolts::{rands::Rand, tuples::Named},
     corpus::{Corpus, HasTestcase},
     generators::GramatronGenerator,
     inputs::{GramatronInput, Terminal},
@@ -36,7 +36,6 @@ where
         &mut self,
         state: &mut S,
         input: &mut GramatronInput,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         if !input.terminals().is_empty() {
             let size = state.rand_mut().below(input.terminals().len() as u64 + 1) as usize;
@@ -72,12 +71,16 @@ where
 
 /// The metadata used for `gramatron`
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(
+    any(not(feature = "serdeany_autoreg"), miri),
+    allow(clippy::unsafe_derive_deserialize)
+)] // for SerdeAny
 pub struct GramatronIdxMapMetadata {
     /// The map containing a vec for each terminal
     pub map: HashMap<usize, Vec<usize>>,
 }
 
-crate::impl_serdeany!(GramatronIdxMapMetadata);
+libafl_bolts::impl_serdeany!(GramatronIdxMapMetadata);
 
 impl GramatronIdxMapMetadata {
     /// Creates a new [`struct@GramatronIdxMapMetadata`].
@@ -105,7 +108,6 @@ where
         &mut self,
         state: &mut S,
         input: &mut GramatronInput,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         if input.terminals().is_empty() {
             return Ok(MutationResult::Skipped);
@@ -176,7 +178,6 @@ where
         &mut self,
         state: &mut S,
         input: &mut GramatronInput,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         if input.terminals().is_empty() {
             return Ok(MutationResult::Skipped);

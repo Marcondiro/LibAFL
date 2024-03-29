@@ -18,8 +18,7 @@ pub struct WithObservers<E, OT> {
 
 impl<E, EM, OT, Z> Executor<EM, Z> for WithObservers<E, OT>
 where
-    E: Executor<EM, Z> + Debug,
-    OT: Debug,
+    E: Executor<EM, Z>,
     EM: UsesState<State = E::State>,
     Z: UsesState<State = E::State>,
 {
@@ -51,8 +50,8 @@ where
 
 impl<E, OT> HasObservers for WithObservers<E, OT>
 where
-    E: HasObservers + Debug,
-    OT: ObserversTuple<E::State> + Debug,
+    E: UsesState,
+    OT: ObserversTuple<E::State>,
 {
     fn observers(&self) -> &OT {
         &self.observers
@@ -63,7 +62,7 @@ where
     }
 }
 
-impl<E: Debug, OT: Debug> WithObservers<E, OT> {
+impl<E, OT> WithObservers<E, OT> {
     /// Wraps the given [`Executor`] with the given [`ObserversTuple`] to implement [`HasObservers`].
     ///
     /// If the executor already implements [`HasObservers`], then the original implementation will be overshadowed by

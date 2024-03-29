@@ -7,11 +7,10 @@ use core::{
     fmt::Debug,
 };
 
+use libafl_bolts::rands::Rand;
+
 use super::{PushStage, PushStageHelper, PushStageSharedState};
-#[cfg(feature = "introspection")]
-use crate::monitors::PerfFeature;
 use crate::{
-    bolts::rands::Rand,
     corpus::{Corpus, CorpusId},
     events::{EventFirer, EventRestarter, HasEventManagerId, ProgressReporter},
     executors::ExitKind,
@@ -21,9 +20,11 @@ use crate::{
     observers::ObserversTuple,
     schedulers::Scheduler,
     start_timer,
-    state::{HasClientPerfMonitor, HasCorpus, HasExecutions, HasMetadata, HasRand},
+    state::{HasCorpus, HasExecutions, HasLastReportTime, HasMetadata, HasRand},
     Error, EvaluatorObservers, ExecutionProcessor, HasScheduler,
 };
+#[cfg(feature = "introspection")]
+use crate::{monitors::PerfFeature, state::HasClientPerfMonitor};
 
 /// The default maximum number of mutations to perform per input.
 pub static DEFAULT_MUTATIONAL_MAX_ITERATIONS: u64 = 128;
@@ -43,7 +44,7 @@ where
     EM: EventFirer<State = CS::State> + EventRestarter + HasEventManagerId,
     M: Mutator<CS::Input, CS::State>,
     OT: ObserversTuple<CS::State>,
-    CS::State: HasClientPerfMonitor + HasRand + HasCorpus + Clone + Debug,
+    CS::State: HasRand + HasCorpus + Clone + Debug,
     Z: ExecutionProcessor<OT, State = CS::State>
         + EvaluatorObservers<OT>
         + HasScheduler<Scheduler = CS>,
@@ -51,8 +52,6 @@ where
     current_corpus_idx: Option<CorpusId>,
     testcases_to_do: usize,
     testcases_done: usize,
-
-    stage_idx: i32,
 
     mutator: M,
 
@@ -65,7 +64,7 @@ where
     EM: EventFirer<State = CS::State> + EventRestarter + HasEventManagerId,
     M: Mutator<CS::Input, CS::State>,
     OT: ObserversTuple<CS::State>,
-    CS::State: HasClientPerfMonitor + HasCorpus + HasRand + Clone + Debug,
+    CS::State: HasCorpus + HasRand + Clone + Debug,
     Z: ExecutionProcessor<OT, State = CS::State>
         + EvaluatorObservers<OT>
         + HasScheduler<Scheduler = CS>,
@@ -89,7 +88,7 @@ where
     M: Mutator<CS::Input, CS::State>,
     OT: ObserversTuple<CS::State>,
     CS::State:
-        HasClientPerfMonitor + HasCorpus + HasRand + HasExecutions + HasMetadata + Clone + Debug,
+        HasCorpus + HasRand + HasExecutions + HasLastReportTime + HasMetadata + Clone + Debug,
     Z: ExecutionProcessor<OT, State = CS::State>
         + EvaluatorObservers<OT>
         + HasScheduler<Scheduler = CS>,
@@ -149,9 +148,7 @@ where
         mark_feature_time!(state, PerfFeature::GetInputFromCorpus);
 
         start_timer!(state);
-        self.mutator
-            .mutate(state, &mut input, self.stage_idx)
-            .unwrap();
+        self.mutator.mutate(state, &mut input).unwrap();
         mark_feature_time!(state, PerfFeature::Mutate);
 
         self.push_stage_helper_mut()
@@ -175,8 +172,7 @@ where
         fuzzer.process_execution(state, event_mgr, last_input, observers, &exit_kind, true)?;
 
         start_timer!(state);
-        self.mutator
-            .post_exec(state, self.stage_idx, self.current_corpus_idx)?;
+        self.mutator.post_exec(state, self.current_corpus_idx)?;
         mark_feature_time!(state, PerfFeature::MutatePostExec);
         self.testcases_done += 1;
 
@@ -203,7 +199,7 @@ where
     M: Mutator<CS::Input, CS::State>,
     OT: ObserversTuple<CS::State>,
     CS::State:
-        HasClientPerfMonitor + HasCorpus + HasRand + HasExecutions + HasMetadata + Clone + Debug,
+        HasCorpus + HasRand + HasExecutions + HasMetadata + HasLastReportTime + Clone + Debug,
     Z: ExecutionProcessor<OT, State = CS::State>
         + EvaluatorObservers<OT>
         + HasScheduler<Scheduler = CS>,
@@ -221,7 +217,7 @@ where
     EM: EventFirer<State = CS::State> + EventRestarter + HasEventManagerId,
     M: Mutator<CS::Input, CS::State>,
     OT: ObserversTuple<CS::State>,
-    CS::State: HasClientPerfMonitor + HasCorpus + HasRand + Clone + Debug,
+    CS::State: HasCorpus + HasRand + Clone + Debug,
     Z: ExecutionProcessor<OT, State = CS::State>
         + EvaluatorObservers<OT>
         + HasScheduler<Scheduler = CS>,
@@ -233,7 +229,6 @@ where
         mutator: M,
         shared_state: Rc<RefCell<Option<PushStageSharedState<CS, EM, OT, Z>>>>,
         exit_kind: Rc<Cell<Option<ExitKind>>>,
-        stage_idx: i32,
     ) -> Self {
         Self {
             mutator,
@@ -241,7 +236,6 @@ where
             current_corpus_idx: None, // todo
             testcases_to_do: 0,
             testcases_done: 0,
-            stage_idx,
         }
     }
 }

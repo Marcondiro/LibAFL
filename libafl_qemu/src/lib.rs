@@ -1,3 +1,10 @@
+#![cfg_attr(nightly, feature(used_with_arg))]
+//! Welcome to `LibAFL` QEMU
+//!
+//! __Warning__: The documentation is built by default for `x86_64` in `usermode`. To access the documentation of other architectures or `systemmode`, the documentation must be rebuilt with the right features.
+#![doc = include_str!("../../README.md")]
+/*! */
+#![cfg_attr(feature = "document-features", doc = document_features::document_features!())]
 // libafl_qemu only supports Linux currently
 #![cfg(target_os = "linux")]
 // This lint triggers too often on the current GuestAddr type when emulating 64-bit targets because
@@ -7,7 +14,9 @@
     allow(clippy::useless_conversion)
 )]
 #![allow(clippy::needless_pass_by_value)]
+#![allow(clippy::needless_pass_by_ref_mut)]
 #![allow(clippy::transmute_ptr_to_ptr)]
+#![allow(clippy::ptr_cast_constness)]
 #![allow(clippy::too_many_arguments)]
 // Till they fix this buggy lint in clippy
 #![allow(clippy::borrow_as_ptr)]
@@ -49,6 +58,16 @@ pub mod mips;
 #[cfg(cpu_target = "mips")]
 pub use mips::*;
 
+#[cfg(cpu_target = "ppc")]
+pub mod ppc;
+#[cfg(cpu_target = "ppc")]
+pub use ppc::*;
+
+#[cfg(cpu_target = "hexagon")]
+pub mod hexagon;
+#[cfg(cpu_target = "hexagon")]
+pub use hexagon::*;
+
 pub mod elf;
 
 pub mod helper;
@@ -59,24 +78,29 @@ pub use hooks::*;
 pub mod edges;
 pub use edges::QemuEdgeCoverageHelper;
 
-#[cfg(not(cpu_target = "mips"))]
+#[cfg(not(any(cpu_target = "mips", cpu_target = "hexagon")))]
 pub mod cmplog;
-#[cfg(not(cpu_target = "mips"))]
+#[cfg(not(any(cpu_target = "mips", cpu_target = "hexagon")))]
 pub use cmplog::QemuCmpLogHelper;
 
-#[cfg(emulation_mode = "usermode")]
+#[cfg(all(emulation_mode = "usermode", feature = "injections"))]
+pub mod injections;
+#[cfg(all(emulation_mode = "usermode", feature = "injections"))]
+pub use injections::QemuInjectionHelper;
+
+#[cfg(all(emulation_mode = "usermode", not(cpu_target = "hexagon")))]
 pub mod snapshot;
-#[cfg(emulation_mode = "usermode")]
+#[cfg(all(emulation_mode = "usermode", not(cpu_target = "hexagon")))]
 pub use snapshot::QemuSnapshotHelper;
 
-#[cfg(emulation_mode = "usermode")]
+#[cfg(all(emulation_mode = "usermode", not(cpu_target = "hexagon")))]
 pub mod asan;
-#[cfg(emulation_mode = "usermode")]
-pub use asan::{init_with_asan, QemuAsanHelper};
+#[cfg(all(emulation_mode = "usermode", not(cpu_target = "hexagon")))]
+pub use asan::{init_qemu_with_asan, QemuAsanHelper};
 
-pub mod blocks;
-
+#[cfg(not(cpu_target = "hexagon"))]
 pub mod calls;
+#[cfg(not(cpu_target = "hexagon"))]
 pub mod drcov;
 
 pub mod executor;
@@ -86,6 +110,10 @@ pub use executor::QemuForkExecutor;
 
 pub mod emu;
 pub use emu::*;
+
+pub mod breakpoint;
+pub mod command;
+pub mod sync_backdoor;
 
 #[must_use]
 pub fn filter_qemu_args() -> Vec<String> {
@@ -129,7 +157,7 @@ pub fn python_module(py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<emu::MapInfo>()?;
     m.add_class::<emu::GuestMaps>()?;
     m.add_class::<emu::SyscallHookResult>()?;
-    m.add_class::<emu::pybind::Emulator>()?;
+    m.add_class::<emu::pybind::Qemu>()?;
 
     Ok(())
 }

@@ -19,34 +19,22 @@ pub use stacktrace::*;
 pub mod concolic;
 
 pub mod value;
-// Rust is breaking this with 'error: intrinsic safety mismatch between list of intrinsics within the compiler and core library intrinsics for intrinsic `type_id`' and so we disable this component for the moment
-//#[cfg(unstable_feature)]
-//pub mod owned;
-//#[cfg(unstable_feature)]
-//pub use owned::*;
-use alloc::{
-    string::{String, ToString},
-    vec::Vec,
-};
+
+/// List observer
+pub mod list;
+use alloc::string::{String, ToString};
 use core::{fmt::Debug, time::Duration};
 #[cfg(feature = "std")]
 use std::time::Instant;
 
+#[cfg(feature = "no_std")]
+use libafl_bolts::current_time;
+use libafl_bolts::{tuples::MatchName, Named};
+pub use list::*;
 use serde::{Deserialize, Serialize};
 pub use value::*;
 
-#[cfg(feature = "no_std")]
-use crate::bolts::current_time;
-use crate::{
-    bolts::{
-        ownedref::OwnedMutPtr,
-        tuples::{MatchName, Named},
-    },
-    executors::ExitKind,
-    inputs::UsesInput,
-    state::UsesState,
-    Error,
-};
+use crate::{executors::ExitKind, inputs::UsesInput, state::UsesState, Error};
 
 /// Something that uses observer like mapfeedbacks
 pub trait UsesObserver<S>
@@ -59,7 +47,7 @@ where
 
 /// Observers observe different information about the target.
 /// They can then be used by various sorts of feedback.
-pub trait Observer<S>: Named + Debug
+pub trait Observer<S>: Named
 where
     S: UsesInput,
 {
@@ -136,7 +124,7 @@ pub trait UsesObservers: UsesState {
 }
 
 /// A haskell-style tuple of observers
-pub trait ObserversTuple<S>: MatchName + Debug
+pub trait ObserversTuple<S>: MatchName
 where
     S: UsesInput,
 {
@@ -538,81 +526,23 @@ where
 {
 }
 
-/// A simple observer with a list of things.
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(bound = "T: serde::de::DeserializeOwned")]
-#[allow(clippy::unsafe_derive_deserialize)]
-pub struct ListObserver<T>
-where
-    T: Debug + Serialize,
-{
-    name: String,
-    /// The list
-    list: OwnedMutPtr<Vec<T>>,
-}
-
-impl<T> ListObserver<T>
-where
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    /// Creates a new [`ListObserver`] with the given name.
-    ///
-    /// # Safety
-    /// Will dereference the list.
-    /// The list may not move in memory.
-    #[must_use]
-    pub unsafe fn new(name: &'static str, list: *mut Vec<T>) -> Self {
-        Self {
-            name: name.to_string(),
-            list: OwnedMutPtr::Ptr(list),
-        }
-    }
-
-    /// Get a list ref
-    #[must_use]
-    pub fn list(&self) -> &Vec<T> {
-        self.list.as_ref()
-    }
-
-    /// Get a list mut
-    #[must_use]
-    pub fn list_mut(&mut self) -> &mut Vec<T> {
-        self.list.as_mut()
-    }
-}
-
-impl<S, T> Observer<S> for ListObserver<T>
-where
-    S: UsesInput,
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    fn pre_exec(&mut self, _state: &mut S, _input: &S::Input) -> Result<(), Error> {
-        self.list.as_mut().clear();
-        Ok(())
-    }
-}
-
-impl<T> Named for ListObserver<T>
-where
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-
 /// `Observer` Python bindings
 #[cfg(feature = "python")]
 #[allow(missing_docs)]
 pub mod pybind {
+    use alloc::vec::Vec;
+    use core::ptr;
     use std::cell::UnsafeCell;
 
+    use libafl_bolts::{
+        tuples::{type_eq, MatchName},
+        Named,
+    };
     use pyo3::prelude::*;
     use serde::{Deserialize, Serialize};
 
-    use super::{Debug, Observer, ObserversTuple, String, Vec};
+    use super::{Debug, Observer, ObserversTuple, String};
     use crate::{
-        bolts::tuples::{type_eq, MatchName, Named},
         executors::{pybind::PythonExitKind, ExitKind},
         inputs::{BytesInput, HasBytesVec},
         observers::map::pybind::{
@@ -651,7 +581,7 @@ pub mod pybind {
         }
     }
 
-    crate::impl_serde_pyobjectwrapper!(PyObjectObserver, inner);
+    libafl_bolts::impl_serde_pyobjectwrapper!(PyObjectObserver, inner);
 
     impl Named for PyObjectObserver {
         fn name(&self) -> &str {
@@ -1056,7 +986,7 @@ pub mod pybind {
 
     impl Named for PythonObserver {
         fn name(&self) -> &str {
-            let ptr = unwrap_me!(self.wrapper, o, { o.name() as *const str });
+            let ptr = unwrap_me!(self.wrapper, o, { ptr::from_ref::<str>(o.name()) });
             unsafe { ptr.as_ref().unwrap() }
         }
     }
@@ -1275,7 +1205,7 @@ pub mod pybind {
                             }
                             PythonObserverWrapper::Python(py_wrapper) => {
                                 if type_eq::<PyObjectObserver, T>() && py_wrapper.name() == name {
-                                    r = (py_wrapper as *const _ as *const T).as_ref();
+                                    r = (ptr::from_ref(py_wrapper) as *const T).as_ref();
                                 }
                             }
                         }
@@ -1361,14 +1291,13 @@ pub mod pybind {
                                 if type_eq::<PythonMapObserverU64, T>()
                                     && py_wrapper.borrow(py).name() == name
                                 {
-                                    r = (std::ptr::addr_of!(*(*py_wrapper).borrow_mut(py))
-                                        as *mut T)
+                                    r = (ptr::addr_of!(*(*py_wrapper).borrow_mut(py)) as *mut T)
                                         .as_mut();
                                 }
                             }
                             PythonObserverWrapper::Python(py_wrapper) => {
                                 if type_eq::<PyObjectObserver, T>() && py_wrapper.name() == name {
-                                    r = (py_wrapper as *mut _ as *mut T).as_mut();
+                                    r = (ptr::from_mut(py_wrapper) as *mut T).as_mut();
                                 }
                             }
                         }
@@ -1393,17 +1322,25 @@ pub mod pybind {
 #[cfg(test)]
 mod tests {
 
-    use crate::{
-        bolts::tuples::{tuple_list, tuple_list_type, Named},
-        observers::{StdMapObserver, TimeObserver},
+    use core::ptr::addr_of_mut;
+
+    use libafl_bolts::{
+        ownedref::OwnedMutSlice,
+        tuples::{tuple_list, tuple_list_type},
+        Named,
     };
+
+    use crate::observers::{StdMapObserver, TimeObserver};
 
     static mut MAP: [u32; 4] = [0; 4];
 
     #[test]
     fn test_observer_serde() {
         let obv = tuple_list!(TimeObserver::new("time"), unsafe {
-            StdMapObserver::new("map", &mut MAP)
+            StdMapObserver::from_ownedref(
+                "map",
+                OwnedMutSlice::from_raw_parts_mut(addr_of_mut!(MAP) as *mut u32, MAP.len()),
+            )
         });
         let vec = postcard::to_allocvec(&obv).unwrap();
         log::info!("{vec:?}");

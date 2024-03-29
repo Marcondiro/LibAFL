@@ -1,13 +1,27 @@
-//! Eventmanager manages all events that go to other instances of the fuzzer.
+//! An [`EventManager`] manages all events that go to other instances of the fuzzer.
+//! The messages are commonly information about new Testcases as well as stats and other [`Event`]s.
+
+pub mod hooks;
 
 pub mod simple;
 pub use simple::*;
-pub mod centralized;
-pub use centralized::*;
-pub mod llmp;
-use alloc::{boxed::Box, string::String, vec::Vec};
 #[cfg(all(unix, feature = "std"))]
-use core::ffi::c_void;
+pub mod centralized;
+#[cfg(all(unix, feature = "std"))]
+pub use centralized::*;
+#[cfg(feature = "std")]
+#[allow(clippy::ignored_unit_patterns)]
+pub mod launcher;
+#[allow(clippy::ignored_unit_patterns)]
+pub mod llmp;
+pub use llmp::*;
+
+#[cfg(feature = "tcp_manager")]
+#[allow(clippy::ignored_unit_patterns)]
+pub mod tcp;
+#[cfg(feature = "scalability_introspection")]
+use alloc::string::ToString;
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::{
     fmt,
     hash::{BuildHasher, Hasher},
@@ -16,31 +30,36 @@ use core::{
 };
 
 use ahash::RandomState;
-pub use llmp::*;
+#[cfg(feature = "std")]
+pub use launcher::*;
+#[cfg(all(unix, feature = "std"))]
+use libafl_bolts::os::unix_signals::{siginfo_t, ucontext_t, Handler, Signal};
+use libafl_bolts::{current_time, ClientId};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "std")]
 use uuid::Uuid;
 
-#[cfg(all(unix, feature = "std"))]
-use crate::bolts::os::unix_signals::{siginfo_t, ucontext_t, Handler, Signal};
-#[cfg(all(unix, feature = "std"))]
-use crate::bolts::{shmem::ShMemProvider, staterestore::StateRestorer};
+#[cfg(feature = "introspection")]
+use crate::state::HasClientPerfMonitor;
 use crate::{
-    bolts::{current_time, ClientId},
     executors::ExitKind,
     inputs::Input,
     monitors::UserStats,
     observers::ObserversTuple,
-    state::{HasClientPerfMonitor, HasExecutions, HasMetadata},
+    state::{HasExecutions, HasLastReportTime, HasMetadata, State},
     Error,
+};
+#[cfg(feature = "scalability_introspection")]
+use crate::{
+    monitors::{AggregatorOps, UserStatsValue},
+    state::HasScalabilityMonitor,
 };
 
 /// Check if ctrl-c is sent with this struct
 #[cfg(all(unix, feature = "std"))]
-pub static mut SHUTDOWN_SIGHANDLER_DATA: ShutdownSignalData = ShutdownSignalData {
-    allocator_pid: 0,
-    staterestorer_ptr: core::ptr::null_mut(),
-    shutdown_handler: core::ptr::null(),
+pub static mut EVENTMGR_SIGHANDLER_STATE: ShutdownSignalData = ShutdownSignalData {
+    shutting_down: false,
+    exit_from_main: false,
 };
 
 /// A signal handler for releasing `StateRestore` `ShMem`
@@ -48,59 +67,51 @@ pub static mut SHUTDOWN_SIGHANDLER_DATA: ShutdownSignalData = ShutdownSignalData
 #[cfg(all(unix, feature = "std"))]
 #[derive(Debug, Clone)]
 pub struct ShutdownSignalData {
-    allocator_pid: usize,
-    staterestorer_ptr: *mut c_void,
-    shutdown_handler: *const c_void,
+    shutting_down: bool,
+    exit_from_main: bool,
 }
 
-/// Type for shutdown handler
 #[cfg(all(unix, feature = "std"))]
-pub type ShutdownFuncPtr =
-    unsafe fn(Signal, siginfo_t, &mut ucontext_t, data: &mut ShutdownSignalData);
+impl ShutdownSignalData {
+    /// Set the flag to true, indicating that this process has allocated shmem
+    pub fn set_exit_from_main(&mut self) {
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(self.exit_from_main), true);
+        }
+    }
+}
 
 /// Shutdown handler. `SigTerm`, `SigInterrupt`, `SigQuit` call this
 /// We can't handle SIGKILL in the signal handler, this means that you shouldn't kill your fuzzer with `kill -9` because then the shmem segments are never freed
-///
-/// # Safety
-///
-/// This will acceess `data` and write to the global `data.staterestorer_ptr` if it's not null.
-#[cfg(all(unix, feature = "std"))]
-pub unsafe fn shutdown_handler<SP>(
-    signal: Signal,
-    _info: siginfo_t,
-    _context: &mut ucontext_t,
-    data: &mut ShutdownSignalData,
-) where
-    SP: ShMemProvider,
-{
-    log::info!(
-        "Fuzzer shutdown by Signal: {} Pid: {}",
-        signal,
-        std::process::id()
-    );
-
-    let ptr = data.staterestorer_ptr;
-    if ptr.is_null() || data.allocator_pid != std::process::id() as usize {
-        // Do nothing
-    } else {
-        // The process allocated the staterestorer map must take care of it
-        let sr = (ptr as *mut StateRestorer<SP>).as_mut().unwrap();
-        // log::trace!("{:#?}", sr);
-        std::ptr::drop_in_place(sr);
-    }
-    log::info!("Bye!");
-    libc::_exit(0);
-}
-
 #[cfg(all(unix, feature = "std"))]
 impl Handler for ShutdownSignalData {
-    fn handle(&mut self, signal: Signal, info: siginfo_t, context: &mut ucontext_t) {
-        unsafe {
-            let data = &mut SHUTDOWN_SIGHANDLER_DATA;
-            if !data.shutdown_handler.is_null() {
-                let func: ShutdownFuncPtr = std::mem::transmute(data.shutdown_handler);
-                (func)(signal, info, context, data);
+    fn handle(
+        &mut self,
+        _signal: Signal,
+        _info: &mut siginfo_t,
+        _context: Option<&mut ucontext_t>,
+    ) {
+        /*
+        println!(
+            "in handler! {} {}",
+            self.exit_from_main,
+            std::process::id()
+        );
+        */
+        // if this process has not allocated any shmem. then simply exit()
+        if !self.exit_from_main {
+            unsafe {
+                #[cfg(unix)]
+                libc::_exit(0);
+
+                #[cfg(windows)]
+                windows::Win32::System::Threading::ExitProcess(1);
             }
+        }
+
+        // else wait till the next is_shutting_down() is called. then the process will exit throught main().
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(self.shutting_down), true);
         }
     }
 
@@ -110,7 +121,7 @@ impl Handler for ShutdownSignalData {
 }
 
 /// A per-fuzzer unique `ID`, usually starting with `0` and increasing
-/// by `1` in multiprocessed `EventManager`s, such as [`self::llmp::LlmpEventManager`].
+/// by `1` in multiprocessed [`EventManager`]s, such as [`self::llmp::LlmpEventManager`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct EventManagerId(
@@ -120,7 +131,7 @@ pub struct EventManagerId(
 
 #[cfg(feature = "introspection")]
 use crate::monitors::ClientPerfMonitor;
-use crate::{inputs::UsesInput, state::UsesState};
+use crate::{inputs::UsesInput, stages::HasCurrentStage, state::UsesState};
 
 /// The log event severity
 #[derive(Serialize, Deserialize, Debug, Clone, Copy)]
@@ -209,7 +220,7 @@ impl EventConfig {
     #[must_use]
     pub fn from_build_id() -> Self {
         EventConfig::BuildID {
-            id: crate::bolts::build_id::get(),
+            id: libafl_bolts::build_id::get(),
         }
     }
 
@@ -263,6 +274,7 @@ where
 }
 */
 
+// TODO remove forward_id as not anymore needed for centralized
 /// Events sent around in the library
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(bound = "I: serde::de::DeserializeOwned")]
@@ -287,7 +299,7 @@ where
         /// The time of generation of the event
         time: Duration,
         /// The executions of this client
-        executions: usize,
+        executions: u64,
         /// The original sender if, if forwarded
         forward_id: Option<ClientId>,
     },
@@ -296,7 +308,7 @@ where
         /// The time of generation of the [`Event`]
         time: Duration,
         /// The executions of this client
-        executions: usize,
+        executions: u64,
         /// [`PhantomData`]
         phantom: PhantomData<I>,
     },
@@ -315,7 +327,7 @@ where
         /// The time of generation of the event
         time: Duration,
         /// The executions of this client
-        executions: usize,
+        executions: u64,
         /// Current performance statistics
         introspection_monitor: Box<ClientPerfMonitor>,
 
@@ -326,6 +338,10 @@ where
     Objective {
         /// Objective corpus size
         objective_size: usize,
+        /// The total number of executions when this objective is found
+        executions: u64,
+        /// The time when this event was created
+        time: Duration,
     },
     /// Write a new log
     Log {
@@ -370,12 +386,12 @@ where
                 time: _,
                 executions: _,
                 phantom: _,
-            }
-            | Event::UpdateUserStats {
+            } => "Client Heartbeat",
+            Event::UpdateUserStats {
                 name: _,
                 value: _,
                 phantom: _,
-            } => "Stats",
+            } => "UserStats",
             #[cfg(feature = "introspection")]
             Event::UpdatePerfMonitor {
                 time: _,
@@ -432,11 +448,11 @@ pub trait EventFirer: UsesState {
     }
 
     /// Serialize all observers for this type and manager
-    fn serialize_observers<OT>(&mut self, observers: &OT) -> Result<Vec<u8>, Error>
+    fn serialize_observers<OT>(&mut self, observers: &OT) -> Result<Option<Vec<u8>>, Error>
     where
         OT: ObserversTuple<Self::State> + Serialize,
     {
-        Ok(postcard::to_allocvec(observers)?)
+        Ok(Some(postcard::to_allocvec(observers)?))
     }
 
     /// Get the configuration
@@ -448,7 +464,7 @@ pub trait EventFirer: UsesState {
 /// [`ProgressReporter`] report progress to the broker.
 pub trait ProgressReporter: EventFirer
 where
-    Self::State: HasClientPerfMonitor + HasMetadata + HasExecutions,
+    Self::State: HasMetadata + HasExecutions + HasLastReportTime,
 {
     /// Given the last time, if `monitor_timeout` seconds passed, send off an info/monitor/heartbeat message to the broker.
     /// Returns the new `last` time (so the old one, unless `monitor_timeout` time has passed and monitor have been sent)
@@ -456,57 +472,95 @@ where
     fn maybe_report_progress(
         &mut self,
         state: &mut Self::State,
-        last_report_time: Duration,
         monitor_timeout: Duration,
-    ) -> Result<Duration, Error> {
-        let executions = *state.executions();
+    ) -> Result<(), Error> {
+        let Some(last_report_time) = state.last_report_time() else {
+            // this is the first time we execute, no need to report progress just yet.
+            *state.last_report_time_mut() = Some(current_time());
+            return Ok(());
+        };
         let cur = current_time();
         // default to 0 here to avoid crashes on clock skew
-        if cur.checked_sub(last_report_time).unwrap_or_default() > monitor_timeout {
-            // Default no introspection implmentation
-            #[cfg(not(feature = "introspection"))]
+        if cur.checked_sub(*last_report_time).unwrap_or_default() > monitor_timeout {
+            // report_progress sets a new `last_report_time` internally.
+            self.report_progress(state)?;
+        }
+        Ok(())
+    }
+
+    /// Send off an info/monitor/heartbeat message to the broker.
+    /// Will return an [`crate::Error`], if the stats could not be sent.
+    fn report_progress(&mut self, state: &mut Self::State) -> Result<(), Error> {
+        let executions = *state.executions();
+        let cur = current_time();
+
+        // Default no introspection implmentation
+        #[cfg(not(feature = "introspection"))]
+        self.fire(
+            state,
+            Event::UpdateExecStats {
+                executions,
+                time: cur,
+                phantom: PhantomData,
+            },
+        )?;
+
+        // If performance monitor are requested, fire the `UpdatePerfMonitor` event
+        #[cfg(feature = "introspection")]
+        {
+            state
+                .introspection_monitor_mut()
+                .set_current_time(libafl_bolts::cpu::read_time_counter());
+
+            // Send the current monitor over to the manager. This `.clone` shouldn't be
+            // costly as `ClientPerfMonitor` impls `Copy` since it only contains `u64`s
             self.fire(
                 state,
-                Event::UpdateExecStats {
+                Event::UpdatePerfMonitor {
                     executions,
                     time: cur,
+                    introspection_monitor: Box::new(state.introspection_monitor().clone()),
                     phantom: PhantomData,
                 },
             )?;
-
-            // If performance monitor are requested, fire the `UpdatePerfMonitor` event
-            #[cfg(feature = "introspection")]
-            {
-                state
-                    .introspection_monitor_mut()
-                    .set_current_time(crate::bolts::cpu::read_time_counter());
-
-                // Send the current monitor over to the manager. This `.clone` shouldn't be
-                // costly as `ClientPerfMonitor` impls `Copy` since it only contains `u64`s
-                self.fire(
-                    state,
-                    Event::UpdatePerfMonitor {
-                        executions,
-                        time: cur,
-                        introspection_monitor: Box::new(state.introspection_monitor().clone()),
-                        phantom: PhantomData,
-                    },
-                )?;
-            }
-
-            Ok(cur)
-        } else {
-            if cur.as_millis() % 1000 == 0 {}
-            Ok(last_report_time)
         }
+
+        // If we are measuring scalability stuff..
+        #[cfg(feature = "scalability_introspection")]
+        {
+            let imported_with_observer = state.scalability_monitor().testcase_with_observers;
+            let imported_without_observer = state.scalability_monitor().testcase_without_observers;
+
+            self.fire(
+                state,
+                Event::UpdateUserStats {
+                    name: "total imported".to_string(),
+                    value: UserStats::new(
+                        UserStatsValue::Number(
+                            (imported_with_observer + imported_without_observer) as u64,
+                        ),
+                        AggregatorOps::Avg,
+                    ),
+                    phantom: PhantomData,
+                },
+            )?;
+        }
+
+        *state.last_report_time_mut() = Some(cur);
+
+        Ok(())
     }
 }
 
 /// Restartable trait
 pub trait EventRestarter: UsesState {
     /// For restarting event managers, implement a way to forward state to their next peers.
+    /// You *must* ensure that [`HasCurrentStage::on_restart`] will be invoked in this method, by you
+    /// or an internal [`EventRestarter`], before the state is saved for recovery.
     #[inline]
-    fn on_restart(&mut self, _state: &mut Self::State) -> Result<(), Error> {
+    fn on_restart(&mut self, state: &mut Self::State) -> Result<(), Error> {
+        state.on_restart()?;
+        self.await_restart_safe();
         Ok(())
     }
 
@@ -516,7 +570,7 @@ pub trait EventRestarter: UsesState {
         Ok(())
     }
 
-    /// Block until we are safe to exit.
+    /// Block until we are safe to exit, usually called inside `on_restart`.
     #[inline]
     fn await_restart_safe(&mut self) {}
 }
@@ -546,13 +600,12 @@ pub trait HasEventManagerId {
 pub trait EventManager<E, Z>:
     EventFirer + EventProcessor<E, Z> + EventRestarter + HasEventManagerId + ProgressReporter
 where
-    Self::State: HasClientPerfMonitor + HasMetadata + HasExecutions,
+    Self::State: HasMetadata + HasExecutions + HasLastReportTime,
 {
 }
 
 /// The handler function for custom buffers exchanged via [`EventManager`]
-type CustomBufHandlerFn<S> =
-    dyn FnMut(&mut S, &String, &[u8]) -> Result<CustomBufEventResult, Error>;
+type CustomBufHandlerFn<S> = dyn FnMut(&mut S, &str, &[u8]) -> Result<CustomBufEventResult, Error>;
 
 /// Supports custom buf handlers to handle `CustomBuf` events.
 pub trait HasCustomBufHandlers: UsesState {
@@ -561,7 +614,7 @@ pub trait HasCustomBufHandlers: UsesState {
 }
 
 /// An eventmgr for tests, and as placeholder if you really don't need an event manager.
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug)]
 pub struct NopEventManager<S> {
     phantom: PhantomData<S>,
 }
@@ -576,16 +629,22 @@ impl<S> NopEventManager<S> {
     }
 }
 
+impl<S> Default for NopEventManager<S> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S> UsesState for NopEventManager<S>
 where
-    S: UsesInput,
+    S: State,
 {
     type State = S;
 }
 
 impl<S> EventFirer for NopEventManager<S>
 where
-    S: UsesInput,
+    S: State,
 {
     fn fire(
         &mut self,
@@ -596,11 +655,11 @@ where
     }
 }
 
-impl<S> EventRestarter for NopEventManager<S> where S: UsesInput {}
+impl<S> EventRestarter for NopEventManager<S> where S: State {}
 
 impl<E, S, Z> EventProcessor<E, Z> for NopEventManager<S>
 where
-    S: UsesInput + HasClientPerfMonitor + HasExecutions,
+    S: State + HasExecutions,
 {
     fn process(
         &mut self,
@@ -613,25 +672,25 @@ where
 }
 
 impl<E, S, Z> EventManager<E, Z> for NopEventManager<S> where
-    S: UsesInput + HasClientPerfMonitor + HasExecutions + HasMetadata
+    S: State + HasExecutions + HasLastReportTime + HasMetadata
 {
 }
 
 impl<S> HasCustomBufHandlers for NopEventManager<S>
 where
-    S: UsesInput,
+    S: State,
 {
     fn add_custom_buf_handler(
         &mut self,
         _handler: Box<
-            dyn FnMut(&mut Self::State, &String, &[u8]) -> Result<CustomBufEventResult, Error>,
+            dyn FnMut(&mut Self::State, &str, &[u8]) -> Result<CustomBufEventResult, Error>,
         >,
     ) {
     }
 }
 
 impl<S> ProgressReporter for NopEventManager<S> where
-    S: UsesInput + HasClientPerfMonitor + HasExecutions + HasMetadata
+    S: State + HasExecutions + HasLastReportTime + HasMetadata
 {
 }
 
@@ -641,16 +700,167 @@ impl<S> HasEventManagerId for NopEventManager<S> {
     }
 }
 
+/// An [`EventManager`] type that wraps another manager, but captures a `monitor` type as well.
+/// This is useful to keep the same API between managers with and without an internal `monitor`.
+#[derive(Copy, Clone, Debug)]
+pub struct MonitorTypedEventManager<EM, M> {
+    inner: EM,
+    phantom: PhantomData<M>,
+}
+
+impl<EM, M> MonitorTypedEventManager<EM, M> {
+    /// Creates a new [`EventManager`] that wraps another manager, but captures a `monitor` type as well.
+    #[must_use]
+    pub fn new(inner: EM) -> Self {
+        MonitorTypedEventManager {
+            inner,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<EM, M> UsesState for MonitorTypedEventManager<EM, M>
+where
+    EM: UsesState,
+{
+    type State = EM::State;
+}
+
+impl<EM, M> EventFirer for MonitorTypedEventManager<EM, M>
+where
+    EM: EventFirer,
+{
+    #[inline]
+    fn fire(
+        &mut self,
+        state: &mut Self::State,
+        event: Event<<Self::State as UsesInput>::Input>,
+    ) -> Result<(), Error> {
+        self.inner.fire(state, event)
+    }
+
+    #[inline]
+    fn log(
+        &mut self,
+        state: &mut Self::State,
+        severity_level: LogSeverity,
+        message: String,
+    ) -> Result<(), Error> {
+        self.inner.log(state, severity_level, message)
+    }
+
+    #[inline]
+    fn serialize_observers<OT>(&mut self, observers: &OT) -> Result<Option<Vec<u8>>, Error>
+    where
+        OT: ObserversTuple<Self::State> + Serialize,
+    {
+        self.inner.serialize_observers(observers)
+    }
+
+    #[inline]
+    fn configuration(&self) -> EventConfig {
+        self.inner.configuration()
+    }
+}
+
+impl<EM, M> EventRestarter for MonitorTypedEventManager<EM, M>
+where
+    EM: EventRestarter,
+{
+    #[inline]
+    fn on_restart(&mut self, state: &mut Self::State) -> Result<(), Error> {
+        self.inner.on_restart(state)
+    }
+
+    #[inline]
+    fn send_exiting(&mut self) -> Result<(), Error> {
+        self.inner.send_exiting()
+    }
+
+    #[inline]
+    fn await_restart_safe(&mut self) {
+        self.inner.await_restart_safe();
+    }
+}
+
+impl<E, EM, M, Z> EventProcessor<E, Z> for MonitorTypedEventManager<EM, M>
+where
+    EM: EventProcessor<E, Z>,
+{
+    #[inline]
+    fn process(
+        &mut self,
+        fuzzer: &mut Z,
+        state: &mut Self::State,
+        executor: &mut E,
+    ) -> Result<usize, Error> {
+        self.inner.process(fuzzer, state, executor)
+    }
+}
+
+impl<E, EM, M, Z> EventManager<E, Z> for MonitorTypedEventManager<EM, M>
+where
+    EM: EventManager<E, Z>,
+    EM::State: HasLastReportTime + HasExecutions + HasMetadata,
+{
+}
+
+impl<EM, M> HasCustomBufHandlers for MonitorTypedEventManager<EM, M>
+where
+    Self: UsesState,
+    EM: HasCustomBufHandlers<State = Self::State>,
+{
+    #[inline]
+    fn add_custom_buf_handler(
+        &mut self,
+        handler: Box<
+            dyn FnMut(&mut Self::State, &str, &[u8]) -> Result<CustomBufEventResult, Error>,
+        >,
+    ) {
+        self.inner.add_custom_buf_handler(handler);
+    }
+}
+
+impl<EM, M> ProgressReporter for MonitorTypedEventManager<EM, M>
+where
+    Self: UsesState,
+    EM: ProgressReporter<State = Self::State>,
+    EM::State: HasLastReportTime + HasExecutions + HasMetadata,
+{
+    #[inline]
+    fn maybe_report_progress(
+        &mut self,
+        state: &mut Self::State,
+        monitor_timeout: Duration,
+    ) -> Result<(), Error> {
+        self.inner.maybe_report_progress(state, monitor_timeout)
+    }
+
+    #[inline]
+    fn report_progress(&mut self, state: &mut Self::State) -> Result<(), Error> {
+        self.inner.report_progress(state)
+    }
+}
+
+impl<EM, M> HasEventManagerId for MonitorTypedEventManager<EM, M>
+where
+    EM: HasEventManagerId,
+{
+    #[inline]
+    fn mgr_id(&self) -> EventManagerId {
+        self.inner.mgr_id()
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
+    use core::ptr::addr_of_mut;
+
+    use libafl_bolts::{current_time, tuples::tuple_list, Named};
     use tuple_list::tuple_list_type;
 
     use crate::{
-        bolts::{
-            current_time,
-            tuples::{tuple_list, Named},
-        },
         events::{Event, EventConfig},
         executors::ExitKind,
         inputs::bytes::BytesInput,
@@ -661,7 +871,9 @@ mod tests {
 
     #[test]
     fn test_event_serde() {
-        let obv = unsafe { StdMapObserver::new("test", &mut MAP) };
+        let obv = unsafe {
+            StdMapObserver::from_mut_ptr("test", addr_of_mut!(MAP) as *mut u32, MAP.len())
+        };
         let map = tuple_list!(obv);
         let observers_buf = postcard::to_allocvec(&map).unwrap();
 
@@ -732,7 +944,7 @@ pub mod pybind {
 
     macro_rules! unwrap_me {
         ($wrapper:expr, $name:ident, $body:block) => {
-            crate::unwrap_me_body!($wrapper, $name, $body, PythonEventManagerWrapper, {
+            libafl_bolts::unwrap_me_body!($wrapper, $name, $body, PythonEventManagerWrapper, {
                 Simple
             })
         };
@@ -740,7 +952,7 @@ pub mod pybind {
 
     macro_rules! unwrap_me_mut {
         ($wrapper:expr, $name:ident, $body:block) => {
-            crate::unwrap_me_mut_body!($wrapper, $name, $body, PythonEventManagerWrapper, {
+            libafl_bolts::unwrap_me_mut_body!($wrapper, $name, $body, PythonEventManagerWrapper, {
                 Simple
             })
         };

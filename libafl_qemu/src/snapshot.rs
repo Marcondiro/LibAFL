@@ -5,6 +5,7 @@ use std::{
 };
 
 use libafl::{inputs::UsesInput, state::HasMetadata};
+use libafl_qemu_sys::{GuestAddr, MmapPerms};
 use meminterval::{Interval, IntervalTree};
 use thread_local::ThreadLocal;
 
@@ -14,21 +15,27 @@ use crate::SYS_fstatat64;
 use crate::SYS_mmap;
 #[cfg(any(cpu_target = "arm", cpu_target = "mips"))]
 use crate::SYS_mmap2;
-#[cfg(not(any(cpu_target = "arm", cpu_target = "mips", cpu_target = "i386")))]
+#[cfg(not(any(
+    cpu_target = "arm",
+    cpu_target = "mips",
+    cpu_target = "i386",
+    cpu_target = "ppc"
+)))]
 use crate::SYS_newfstatat;
 use crate::{
-    emu::{Emulator, MmapPerms, SyscallHookResult},
+    asan::QemuAsanHelper,
+    emu::SyscallHookResult,
     helper::{QemuHelper, QemuHelperTuple},
-    hooks::QemuHooks,
-    GuestAddr, SYS_fstat, SYS_fstatfs, SYS_futex, SYS_getrandom, SYS_mprotect, SYS_mremap,
-    SYS_munmap, SYS_pread64, SYS_read, SYS_readlinkat, SYS_statfs,
+    hooks::{Hook, QemuHooks},
+    Qemu, SYS_fstat, SYS_fstatfs, SYS_futex, SYS_getrandom, SYS_mprotect, SYS_mremap, SYS_munmap,
+    SYS_pread64, SYS_read, SYS_readlinkat, SYS_statfs,
 };
 
-// TODO use the functions provided by Emulator
+// TODO use the functions provided by Qemu
 pub const SNAPSHOT_PAGE_SIZE: usize = 4096;
 pub const SNAPSHOT_PAGE_MASK: GuestAddr = !(SNAPSHOT_PAGE_SIZE as GuestAddr - 1);
 
-pub type StopExecutionCallback = Box<dyn FnMut(&mut QemuSnapshotHelper, &Emulator)>;
+pub type StopExecutionCallback = Box<dyn FnMut(&mut QemuSnapshotHelper, &Qemu)>;
 
 #[derive(Debug)]
 pub struct SnapshotPageInfo {
@@ -88,7 +95,7 @@ impl core::fmt::Debug for QemuSnapshotHelper {
             .field("mmap_start", &self.mmap_start)
             .field("mmap_limit", &self.mmap_limit)
             .field("empty", &self.empty)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -130,11 +137,11 @@ impl QemuSnapshotHelper {
     }
 
     #[allow(clippy::uninit_assumed_init)]
-    pub fn snapshot(&mut self, emulator: &Emulator) {
-        self.brk = emulator.get_brk();
-        self.mmap_start = emulator.get_mmap_start();
+    pub fn snapshot(&mut self, qemu: Qemu) {
+        self.brk = qemu.get_brk();
+        self.mmap_start = qemu.get_mmap_start();
         self.pages.clear();
-        for map in emulator.mappings() {
+        for map in qemu.mappings() {
             let mut addr = map.start();
             while addr < map.end() {
                 let mut info = SnapshotPageInfo {
@@ -143,11 +150,11 @@ impl QemuSnapshotHelper {
                     private: map.is_priv(),
                     data: None,
                 };
-                if map.flags().is_r() {
+                if map.flags().readable() {
                     // TODO not just for R pages
                     unsafe {
                         info.data = Some(Box::new(core::mem::zeroed()));
-                        emulator.read_mem(addr, &mut info.data.as_mut().unwrap()[..]);
+                        qemu.read_mem(addr, &mut info.data.as_mut().unwrap()[..]);
                     }
                 }
                 self.pages.insert(addr, info);
@@ -202,11 +209,11 @@ impl QemuSnapshotHelper {
         }
     }
 
-    pub fn reset(&mut self, emulator: &Emulator) {
+    pub fn reset(&mut self, qemu: Qemu) {
         {
             let new_maps = self.new_maps.get_mut().unwrap();
 
-            for acc in self.accesses.iter_mut() {
+            for acc in &mut self.accesses {
                 unsafe { &mut (*acc.get()) }.dirty.retain(|page| {
                     if let Some(info) = self.pages.get_mut(page) {
                         // TODO avoid duplicated memcpy
@@ -217,8 +224,8 @@ impl QemuSnapshotHelper {
                                 .tree
                                 .query_mut(*page..(page + SNAPSHOT_PAGE_SIZE as GuestAddr))
                             {
-                                if !entry.value.perms.unwrap_or(MmapPerms::None).is_w() {
-                                    drop(emulator.mprotect(
+                                if !entry.value.perms.unwrap_or(MmapPerms::None).writable() {
+                                    drop(qemu.mprotect(
                                         entry.interval.start,
                                         (entry.interval.end - entry.interval.start) as usize,
                                         MmapPerms::ReadWrite,
@@ -233,7 +240,7 @@ impl QemuSnapshotHelper {
                                 return true; // Restore later
                             }
 
-                            unsafe { emulator.write_mem(*page, &data[..]) };
+                            unsafe { qemu.write_mem(*page, &data[..]) };
                         } else {
                             panic!("Cannot restored a dirty but unsaved page");
                         }
@@ -243,19 +250,20 @@ impl QemuSnapshotHelper {
             }
         }
 
-        self.reset_maps(emulator);
+        self.reset_maps(qemu);
 
         // This one is after that we remapped potential regions mapped at snapshot time but unmapped during execution
-        for acc in self.accesses.iter_mut() {
+        for acc in &mut self.accesses {
             for page in unsafe { &(*acc.get()).dirty } {
                 for entry in self
                     .maps
                     .tree
                     .query_mut(*page..(page + SNAPSHOT_PAGE_SIZE as GuestAddr))
                 {
-                    if !entry.value.perms.unwrap_or(MmapPerms::None).is_w() && !entry.value.changed
+                    if !entry.value.perms.unwrap_or(MmapPerms::None).writable()
+                        && !entry.value.changed
                     {
-                        drop(emulator.mprotect(
+                        drop(qemu.mprotect(
                             entry.interval.start,
                             (entry.interval.end - entry.interval.start) as usize,
                             MmapPerms::ReadWrite,
@@ -267,7 +275,7 @@ impl QemuSnapshotHelper {
                 if let Some(info) = self.pages.get_mut(page) {
                     // TODO avoid duplicated memcpy
                     if let Some(data) = info.data.as_ref() {
-                        unsafe { emulator.write_mem(*page, &data[..]) };
+                        unsafe { qemu.write_mem(*page, &data[..]) };
                     } else {
                         panic!("Cannot restored a dirty but unsaved page");
                     }
@@ -278,7 +286,7 @@ impl QemuSnapshotHelper {
 
         for entry in self.maps.tree.query_mut(0..GuestAddr::MAX) {
             if entry.value.changed {
-                drop(emulator.mprotect(
+                drop(qemu.mprotect(
                     entry.interval.start,
                     (entry.interval.end - entry.interval.start) as usize,
                     entry.value.perms.unwrap(),
@@ -287,8 +295,8 @@ impl QemuSnapshotHelper {
             }
         }
 
-        emulator.set_brk(self.brk);
-        emulator.set_mmap_start(self.mmap_start);
+        qemu.set_brk(self.brk);
+        qemu.set_mmap_start(self.mmap_start);
     }
 
     pub fn is_unmap_allowed(&mut self, start: GuestAddr, mut size: usize) -> bool {
@@ -325,8 +333,8 @@ impl QemuSnapshotHelper {
 
         if self.mmap_limit != 0 && total_size > self.mmap_limit {
             let mut cb = self.stop_execution.take().unwrap();
-            let emu = Emulator::new_empty();
-            (cb)(self, &emu);
+            let qemu = Qemu::get().unwrap();
+            (cb)(self, &qemu);
             self.stop_execution = Some(cb);
         }
     }
@@ -419,7 +427,7 @@ impl QemuSnapshotHelper {
         }
     }
 
-    pub fn reset_maps(&mut self, emulator: &Emulator) {
+    pub fn reset_maps(&mut self, qemu: Qemu) {
         let new_maps = self.new_maps.get_mut().unwrap();
 
         for entry in self.maps.tree.query(0..GuestAddr::MAX) {
@@ -434,14 +442,14 @@ impl QemuSnapshotHelper {
 
             if found.is_empty() {
                 //panic!("A pre-snapshot memory region was unmapped");
-                drop(emulator.map_fixed(
+                drop(qemu.map_fixed(
                     entry.interval.start,
                     (entry.interval.end - entry.interval.start) as usize,
                     entry.value.perms.unwrap(),
                 ));
             } else if found.len() == 1 && found[0].0 == *entry.interval {
                 if found[0].1 && found[0].2 != entry.value.perms {
-                    drop(emulator.mprotect(
+                    drop(qemu.mprotect(
                         entry.interval.start,
                         (entry.interval.end - entry.interval.start) as usize,
                         entry.value.perms.unwrap(),
@@ -449,20 +457,20 @@ impl QemuSnapshotHelper {
                 }
             } else {
                 //  TODO check for holes
-                drop(emulator.mprotect(
+                drop(qemu.mprotect(
                     entry.interval.start,
                     (entry.interval.end - entry.interval.start) as usize,
                     entry.value.perms.unwrap(),
                 ));
             }
 
-            for (i, _, _) in found {
+            for (i, ..) in found {
                 new_maps.tree.delete(i);
             }
         }
 
         for entry in new_maps.tree.query(0..GuestAddr::MAX) {
-            drop(emulator.unmap(
+            drop(qemu.unmap(
                 entry.interval.start,
                 (entry.interval.end - entry.interval.start) as usize,
             ));
@@ -482,36 +490,39 @@ impl<S> QemuHelper<S> for QemuSnapshotHelper
 where
     S: UsesInput + HasMetadata,
 {
-    fn first_exec<QT>(&self, hooks: &QemuHooks<'_, QT, S>)
+    fn first_exec<QT>(&self, hooks: &QemuHooks<QT, S>)
     where
         QT: QemuHelperTuple<S>,
     {
-        hooks.writes(
-            None,
-            Some(trace_write1_snapshot::<QT, S>),
-            Some(trace_write2_snapshot::<QT, S>),
-            Some(trace_write4_snapshot::<QT, S>),
-            Some(trace_write8_snapshot::<QT, S>),
-            Some(trace_write_n_snapshot::<QT, S>),
-        );
+        if hooks.match_helper::<QemuAsanHelper>().is_none() {
+            // The ASan helper, if present, will call the tracer hook for the snapshot helper as opt
+            hooks.writes(
+                Hook::Empty,
+                Hook::Function(trace_write1_snapshot::<QT, S>),
+                Hook::Function(trace_write2_snapshot::<QT, S>),
+                Hook::Function(trace_write4_snapshot::<QT, S>),
+                Hook::Function(trace_write8_snapshot::<QT, S>),
+                Hook::Function(trace_write_n_snapshot::<QT, S>),
+            );
+        }
 
         if !self.accurate_unmap {
-            hooks.syscalls(filter_mmap_snapshot::<QT, S>);
+            hooks.syscalls(Hook::Function(filter_mmap_snapshot::<QT, S>));
         }
-        hooks.after_syscalls(trace_mmap_snapshot::<QT, S>);
+        hooks.after_syscalls(Hook::Function(trace_mmap_snapshot::<QT, S>));
     }
 
-    fn pre_exec(&mut self, emulator: &Emulator, _input: &S::Input) {
+    fn pre_exec(&mut self, qemu: Qemu, _input: &S::Input) {
         if self.empty {
-            self.snapshot(emulator);
+            self.snapshot(qemu);
         } else {
-            self.reset(emulator);
+            self.reset(qemu);
         }
     }
 }
 
 pub fn trace_write1_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
     _id: u64,
     addr: GuestAddr,
@@ -524,7 +535,7 @@ pub fn trace_write1_snapshot<QT, S>(
 }
 
 pub fn trace_write2_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
     _id: u64,
     addr: GuestAddr,
@@ -537,7 +548,7 @@ pub fn trace_write2_snapshot<QT, S>(
 }
 
 pub fn trace_write4_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
     _id: u64,
     addr: GuestAddr,
@@ -550,7 +561,7 @@ pub fn trace_write4_snapshot<QT, S>(
 }
 
 pub fn trace_write8_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
     _id: u64,
     addr: GuestAddr,
@@ -563,7 +574,7 @@ pub fn trace_write8_snapshot<QT, S>(
 }
 
 pub fn trace_write_n_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
     _id: u64,
     addr: GuestAddr,
@@ -579,17 +590,17 @@ pub fn trace_write_n_snapshot<QT, S>(
 #[allow(clippy::too_many_arguments)]
 #[allow(non_upper_case_globals)]
 pub fn filter_mmap_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
     sys_num: i32,
-    a0: u64,
-    a1: u64,
-    _a2: u64,
-    _a3: u64,
-    _a4: u64,
-    _a5: u64,
-    _a6: u64,
-    _a7: u64,
+    a0: GuestAddr,
+    a1: GuestAddr,
+    _a2: GuestAddr,
+    _a3: GuestAddr,
+    _a4: GuestAddr,
+    _a5: GuestAddr,
+    _a6: GuestAddr,
+    _a7: GuestAddr,
 ) -> SyscallHookResult
 where
     S: UsesInput,
@@ -607,19 +618,19 @@ where
 #[allow(clippy::too_many_arguments)]
 #[allow(non_upper_case_globals)]
 pub fn trace_mmap_snapshot<QT, S>(
-    hooks: &mut QemuHooks<'_, QT, S>,
+    hooks: &mut QemuHooks<QT, S>,
     _state: Option<&mut S>,
-    result: u64,
+    result: GuestAddr,
     sys_num: i32,
-    a0: u64,
-    a1: u64,
-    a2: u64,
-    a3: u64,
-    _a4: u64,
-    _a5: u64,
-    _a6: u64,
-    _a7: u64,
-) -> u64
+    a0: GuestAddr,
+    a1: GuestAddr,
+    a2: GuestAddr,
+    a3: GuestAddr,
+    _a4: GuestAddr,
+    _a5: GuestAddr,
+    _a6: GuestAddr,
+    _a7: GuestAddr,
+) -> GuestAddr
 where
     S: UsesInput,
     QT: QemuHelperTuple<S>,
@@ -628,41 +639,46 @@ where
     match i64::from(sys_num) {
         SYS_read | SYS_pread64 => {
             let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-            h.access(a1 as GuestAddr, a2 as usize);
+            h.access(a1, a2 as usize);
         }
         SYS_readlinkat => {
             let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-            h.access(a2 as GuestAddr, a3 as usize);
+            h.access(a2, a3 as usize);
         }
         SYS_futex => {
             let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-            h.access(a0 as GuestAddr, a3 as usize);
+            h.access(a0, a3 as usize);
         }
-        #[cfg(not(any(cpu_target = "arm", cpu_target = "i386", cpu_target = "mips")))]
+        #[cfg(not(any(
+            cpu_target = "arm",
+            cpu_target = "i386",
+            cpu_target = "mips",
+            cpu_target = "ppc"
+        )))]
         SYS_newfstatat => {
             if a2 != 0 {
                 let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                h.access(a2 as GuestAddr, 4096); // stat is not greater than a page
+                h.access(a2, 4096); // stat is not greater than a page
             }
         }
         #[cfg(any(cpu_target = "arm", cpu_target = "mips", cpu_target = "i386"))]
         SYS_fstatat64 => {
             if a2 != 0 {
                 let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                h.access(a2 as GuestAddr, 4096); // stat is not greater than a page
+                h.access(a2, 4096); // stat is not greater than a page
             }
         }
         SYS_statfs | SYS_fstatfs | SYS_fstat => {
             let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-            h.access(a1 as GuestAddr, 4096); // stat is not greater than a page
+            h.access(a1, 4096); // stat is not greater than a page
         }
         SYS_getrandom => {
             let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-            h.access(a0 as GuestAddr, a1 as usize);
+            h.access(a0, a1 as usize);
         }
         // mmap syscalls
-        _ => {
-            if result as GuestAddr == GuestAddr::MAX
+        sys_const => {
+            if result == GuestAddr::MAX
             /* -1 */
             {
                 return result;
@@ -671,35 +687,35 @@ where
             // TODO handle huge pages
 
             #[cfg(any(cpu_target = "arm", cpu_target = "mips"))]
-            if i64::from(sys_num) == SYS_mmap2 {
+            if sys_const == SYS_mmap2 {
                 if let Ok(prot) = MmapPerms::try_from(a2 as i32) {
                     let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                    h.add_mapped(result as GuestAddr, a1 as usize, Some(prot));
+                    h.add_mapped(result, a1 as usize, Some(prot));
                 }
             }
 
             #[cfg(not(cpu_target = "arm"))]
-            if i64::from(sys_num) == SYS_mmap {
+            if sys_const == SYS_mmap {
                 if let Ok(prot) = MmapPerms::try_from(a2 as i32) {
                     let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                    h.add_mapped(result as GuestAddr, a1 as usize, Some(prot));
+                    h.add_mapped(result, a1 as usize, Some(prot));
                 }
             }
 
-            if i64::from(sys_num) == SYS_mremap {
+            if sys_const == SYS_mremap {
                 let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                h.remove_mapped(a0 as GuestAddr, a1 as usize);
-                h.add_mapped(result as GuestAddr, a2 as usize, None);
-                // TODO get the old permissions from the removed mappin
-            } else if i64::from(sys_num) == SYS_mprotect {
+                // TODO get the old permissions from the removed mapping
+                h.remove_mapped(a0, a1 as usize);
+                h.add_mapped(result, a2 as usize, None);
+            } else if sys_const == SYS_mprotect {
                 if let Ok(prot) = MmapPerms::try_from(a2 as i32) {
                     let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                    h.add_mapped(a0 as GuestAddr, a1 as usize, Some(prot));
+                    h.add_mapped(a0, a1 as usize, Some(prot));
                 }
-            } else if i64::from(sys_num) == SYS_munmap {
+            } else if sys_const == SYS_munmap {
                 let h = hooks.match_helper_mut::<QemuSnapshotHelper>().unwrap();
-                if !h.accurate_unmap && !h.is_unmap_allowed(a0 as GuestAddr, a1 as usize) {
-                    h.remove_mapped(a0 as GuestAddr, a1 as usize);
+                if !h.accurate_unmap && !h.is_unmap_allowed(a0, a1 as usize) {
+                    h.remove_mapped(a0, a1 as usize);
                 }
             }
         }

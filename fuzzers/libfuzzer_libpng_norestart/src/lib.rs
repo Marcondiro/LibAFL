@@ -11,18 +11,9 @@ use std::{env, net::SocketAddr, path::PathBuf};
 
 use clap::{self, Parser};
 use libafl::{
-    bolts::{
-        core_affinity::Cores,
-        current_nanos,
-        launcher::Launcher,
-        rands::StdRand,
-        shmem::{ShMemProvider, StdShMemProvider},
-        tuples::{tuple_list, Merge},
-        AsSlice,
-    },
     corpus::{Corpus, InMemoryOnDiskCorpus, OnDiskCorpus},
-    events::{EventConfig, EventRestarter, LlmpRestartingEventManager},
-    executors::{inprocess::InProcessExecutor, ExitKind, TimeoutExecutor},
+    events::{launcher::Launcher, EventConfig, EventRestarter, LlmpRestartingEventManager},
+    executors::{inprocess::InProcessExecutor, ExitKind},
     feedback_or, feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
@@ -37,6 +28,14 @@ use libafl::{
     stages::mutational::StdMutationalStage,
     state::{HasCorpus, HasMetadata, StdState},
     Error,
+};
+use libafl_bolts::{
+    core_affinity::Cores,
+    current_nanos,
+    rands::StdRand,
+    shmem::{ShMemProvider, StdShMemProvider},
+    tuples::{tuple_list, Merge},
+    AsSlice,
 };
 use libafl_targets::{libfuzzer_initialize, libfuzzer_test_one_input, std_edges_map_observer};
 
@@ -74,7 +73,13 @@ struct Opt {
     #[arg(short = 'a', long, help = "Specify a remote broker", name = "REMOTE")]
     remote_broker_addr: Option<SocketAddr>,
 
-    #[arg(short, long, help = "Set an the corpus directories", name = "INPUT")]
+    #[arg(
+        short,
+        long,
+        help = "Set an the corpus directories",
+        name = "INPUT",
+        required = true
+    )]
     input: Vec<PathBuf>,
 
     #[arg(
@@ -129,10 +134,10 @@ struct Opt {
 
 /// The main fn, `no_mangle` as it is a C symbol
 #[no_mangle]
-pub fn libafl_main() {
+pub extern "C" fn libafl_main() {
     // Registry the metadata types used in this fuzzer
     // Needed only on no_std
-    //RegistryBuilder::register::<Tokens>();
+    // unsafe { RegistryBuilder::register::<Tokens>(); }
     let opt = Opt::parse();
 
     let broker_port = opt.broker_port;
@@ -152,8 +157,8 @@ pub fn libafl_main() {
     );
 
     let mut run_client = |state: Option<_>,
-                          mut restarting_mgr: LlmpRestartingEventManager<_, _>,
-                          _core_id| {
+                          mut restarting_mgr: LlmpRestartingEventManager<_, _, _>,
+                          core_id| {
         // Create an observation channel using the coverage map
         let edges_observer = HitcountsMapObserver::new(unsafe { std_edges_map_observer("edges") });
 
@@ -223,18 +228,14 @@ pub fn libafl_main() {
         };
 
         // Create the executor for an in-process function with one observer for edge coverage and one for the execution time
-        let mut executor = TimeoutExecutor::new(
-            InProcessExecutor::new(
-                &mut harness,
-                tuple_list!(edges_observer, time_observer),
-                &mut fuzzer,
-                &mut state,
-                &mut restarting_mgr,
-            )?,
-            // 10 seconds timeout
+        let mut executor = InProcessExecutor::with_timeout(
+            &mut harness,
+            tuple_list!(edges_observer, time_observer),
+            &mut fuzzer,
+            &mut state,
+            &mut restarting_mgr,
             opt.timeout,
-        );
-
+        )?;
         // The actual target run starts here.
         // Call LLVMFUzzerInitialize() if present.
         let args: Vec<String> = env::args().collect();
@@ -245,7 +246,14 @@ pub fn libafl_main() {
         // In case the corpus is empty (on first run), reset
         if state.must_load_initial_inputs() {
             state
-                .load_initial_inputs(&mut fuzzer, &mut executor, &mut restarting_mgr, &opt.input)
+                .load_initial_inputs_multicore(
+                    &mut fuzzer,
+                    &mut executor,
+                    &mut restarting_mgr,
+                    &opt.input,
+                    &core_id,
+                    &cores,
+                )
                 .unwrap_or_else(|_| panic!("Failed to load initial corpus at {:?}", &opt.input));
             println!("We imported {} inputs from disk.", state.corpus().count());
         }

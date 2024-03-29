@@ -27,12 +27,19 @@
 //! # SymCC and SymQEMU expect to runtime file to be called `libSymRuntime.so`. Setting the name to `SymRuntime` achieves this.
 //! name = "SymRuntime"
 //! ```
+#![allow(
+    clippy::module_name_repetitions,
+    clippy::missing_panics_doc,
+    clippy::pub_underscore_fields
+)]
+
 pub mod filter;
 pub mod tracing;
 
 // The following exports are used by the `export_runtime` macro. They are therefore exported, but hidden from docs, as they are not supposed to be used directly by the user.
 #[doc(hidden)]
 #[cfg(target_os = "linux")]
+#[allow(clippy::mixed_attributes_style)]
 pub mod cpp_runtime {
     #![allow(non_upper_case_globals)]
     #![allow(non_camel_case_types)]
@@ -126,7 +133,7 @@ macro_rules! unwrap_option {
     };
 }
 
-/// Creates an exported extern C function for the given runtime function declaration, forwarding to the runtime as obtained by $rt_cb (which should be `fn (fn (&mut impl Runtime))`).
+/// Creates an exported extern C function for the given runtime function declaration, forwarding to the runtime as obtained by `$rt_cb` (which should be `fn (fn (&mut impl Runtime))`).
 #[doc(hidden)]
 #[macro_export]
 macro_rules! export_rust_runtime_fn {

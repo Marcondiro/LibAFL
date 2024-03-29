@@ -2,15 +2,9 @@ use core::time::Duration;
 use std::{env, path::PathBuf};
 
 use libafl::{
-    bolts::{
-        current_nanos,
-        rands::StdRand,
-        tuples::{tuple_list, Merge},
-        AsSlice,
-    },
     corpus::{Corpus, InMemoryCorpus, OnDiskCorpus},
     events::{setup_restarting_mgr_std, EventConfig, EventRestarter},
-    executors::{inprocess::InProcessExecutor, ExitKind, TimeoutExecutor},
+    executors::{inprocess::InProcessExecutor, ExitKind},
     feedback_or, feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
@@ -25,9 +19,15 @@ use libafl::{
     state::{HasCorpus, StdState},
     Error,
 };
+use libafl_bolts::{
+    current_nanos,
+    rands::StdRand,
+    tuples::{tuple_list, Merge},
+    AsSlice,
+};
 use libafl_targets::{libfuzzer_initialize, libfuzzer_test_one_input, std_edges_map_observer};
 #[no_mangle]
-pub fn libafl_main() {
+pub extern "C" fn libafl_main() {
     println!(
         "Workdir: {:?}",
         env::current_dir().unwrap().to_string_lossy().to_string()
@@ -130,17 +130,14 @@ fn fuzz(corpus_dirs: &[PathBuf], objective_dir: PathBuf, broker_port: u16) -> Re
     };
 
     // Create the executor for an in-process function with one observer for edge coverage and one for the execution time
-    let mut executor = TimeoutExecutor::new(
-        InProcessExecutor::new(
-            &mut harness,
-            tuple_list!(edges_observer, time_observer),
-            &mut fuzzer,
-            &mut state,
-            &mut restarting_mgr,
-        )?,
-        // 10 seconds timeout
+    let mut executor = InProcessExecutor::with_timeout(
+        &mut harness,
+        tuple_list!(edges_observer, time_observer),
+        &mut fuzzer,
+        &mut state,
+        &mut restarting_mgr,
         Duration::new(10, 0),
-    );
+    )?;
 
     // Initialize ASAN, call this before any ASAN crashes can occur (directly after initializing executor e.g.)
     #[cfg(windows)]

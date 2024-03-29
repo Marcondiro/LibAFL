@@ -8,17 +8,8 @@ use std::path::PathBuf;
 
 use frida_gum::Gum;
 use libafl::{
-    bolts::{
-        cli::{parse_args, FuzzerOptions},
-        current_nanos,
-        launcher::Launcher,
-        rands::StdRand,
-        shmem::{ShMemProvider, StdShMemProvider},
-        tuples::{tuple_list, Merge},
-        AsSlice,
-    },
     corpus::{CachedOnDiskCorpus, Corpus, OnDiskCorpus},
-    events::{llmp::LlmpRestartingEventManager, EventConfig},
+    events::{launcher::Launcher, llmp::LlmpRestartingEventManager, EventConfig},
     executors::{inprocess::InProcessExecutor, ExitKind, ShadowExecutor},
     feedback_or, feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
@@ -37,6 +28,14 @@ use libafl::{
 };
 #[cfg(unix)]
 use libafl::{feedback_and_fast, feedbacks::ConstFeedback};
+use libafl_bolts::{
+    cli::{parse_args, FuzzerOptions},
+    current_nanos,
+    rands::StdRand,
+    shmem::{ShMemProvider, StdShMemProvider},
+    tuples::{tuple_list, Merge},
+    AsSlice,
+};
 #[cfg(unix)]
 use libafl_frida::asan::{
     asan_rt::AsanRuntime,
@@ -72,7 +71,7 @@ unsafe fn fuzz(options: &FuzzerOptions) -> Result<(), Error> {
 
     let shmem_provider = StdShMemProvider::new()?;
 
-    let mut run_client = |state: Option<_>, mgr: LlmpRestartingEventManager<_, _>, core_id| {
+    let mut run_client = |state: Option<_>, mgr: LlmpRestartingEventManager<_, _, _>, core_id| {
         // The restarting state will spawn the same process again as child, then restarted it each time it crashes.
 
         // println!("{:?}", mgr.mgr_id());
@@ -90,12 +89,12 @@ unsafe fn fuzz(options: &FuzzerOptions) -> Result<(), Error> {
         };
 
         if options.asan && options.asan_cores.contains(core_id) {
-            (|state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _>, _core_id| {
+            (|state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _, _>, _core_id| {
                 let gum = Gum::obtain();
 
                 let coverage = CoverageRuntime::new();
                 #[cfg(unix)]
-                let asan = AsanRuntime::new(options.clone());
+                let asan = AsanRuntime::new(&options);
 
                 #[cfg(unix)]
                 let mut frida_helper =
@@ -212,11 +211,12 @@ unsafe fn fuzz(options: &FuzzerOptions) -> Result<(), Error> {
                 Ok(())
             })(state, mgr, core_id)
         } else if options.cmplog && options.cmplog_cores.contains(core_id) {
-            (|state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _>, _core_id| {
+            (|state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _, _>, _core_id| {
                 let gum = Gum::obtain();
 
                 let coverage = CoverageRuntime::new();
                 let cmplog = CmpLogRuntime::new();
+                println!("cmplog runtime created");
 
                 let mut frida_helper =
                     FridaInstrumentationHelper::new(&gum, options, tuple_list!(coverage, cmplog));
@@ -343,7 +343,7 @@ unsafe fn fuzz(options: &FuzzerOptions) -> Result<(), Error> {
                 Ok(())
             })(state, mgr, core_id)
         } else {
-            (|state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _>, _core_id| {
+            (|state: Option<_>, mut mgr: LlmpRestartingEventManager<_, _, _>, _core_id| {
                 let gum = Gum::obtain();
 
                 let coverage = CoverageRuntime::new();
@@ -466,7 +466,7 @@ unsafe fn fuzz(options: &FuzzerOptions) -> Result<(), Error> {
         .run_client(&mut run_client)
         .cores(&options.cores)
         .broker_port(options.broker_port)
-        .stdout_file(Some(&options.stdout))
+        // .stdout_file(Some(&options.stdout))
         .remote_broker_addr(options.remote_broker_addr)
         .build()
         .launch()

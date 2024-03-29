@@ -4,8 +4,9 @@
 use alloc::vec::Vec;
 use core::cmp::{max, min};
 
+use libafl_bolts::{rands::Rand, Named};
+
 use crate::{
-    bolts::{rands::Rand, tuples::Named},
     corpus::Corpus,
     inputs::{GeneralizedInputMetadata, GeneralizedItem},
     mutators::{token_mutations::Tokens, MutationResult, Mutator},
@@ -121,7 +122,6 @@ where
         &mut self,
         state: &mut S,
         generalised_meta: &mut GeneralizedInputMetadata,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         extend_with_random_generalized(
             state,
@@ -162,7 +162,6 @@ where
         &mut self,
         state: &mut S,
         generalised_meta: &mut GeneralizedInputMetadata,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         let mut mutated = MutationResult::Skipped;
 
@@ -235,7 +234,6 @@ where
         &mut self,
         state: &mut S,
         generalised_meta: &mut GeneralizedInputMetadata,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         let tokens_len = {
             let meta = state.metadata_map().get::<Tokens>();
@@ -346,7 +344,6 @@ where
         &mut self,
         state: &mut S,
         generalised_meta: &mut GeneralizedInputMetadata,
-        _stage_idx: i32,
     ) -> Result<MutationResult, Error> {
         let gen = generalised_meta.generalized_mut();
 

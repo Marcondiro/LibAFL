@@ -23,33 +23,37 @@ pub use new_hash_feedback::NewHashFeedbackMetadata;
 
 #[cfg(feature = "nautilus")]
 pub mod nautilus;
+pub mod transferred;
+
+/// The module for list feedback
+pub mod list;
 use alloc::string::{String, ToString};
 use core::{
     fmt::{self, Debug, Formatter},
     marker::PhantomData,
 };
 
+use libafl_bolts::Named;
+pub use list::*;
 #[cfg(feature = "nautilus")]
 pub use nautilus::*;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bolts::tuples::Named,
     corpus::Testcase,
     events::EventFirer,
     executors::ExitKind,
-    inputs::UsesInput,
-    observers::{ListObserver, ObserversTuple, TimeObserver},
-    state::HasClientPerfMonitor,
+    observers::{ObserversTuple, TimeObserver},
+    state::State,
     Error,
 };
 
 /// Feedbacks evaluate the observers.
 /// Basically, they reduce the information provided by an observer to a value,
 /// indicating the "interestingness" of the last run.
-pub trait Feedback<S>: Named + Debug
+pub trait Feedback<S>: Named
 where
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// Initializes the feedback state.
     /// This method is called after that the `State` is created.
@@ -89,13 +93,13 @@ where
         OT: ObserversTuple<S>,
     {
         // Start a timer for this feedback
-        let start_time = crate::bolts::cpu::read_time_counter();
+        let start_time = libafl_bolts::cpu::read_time_counter();
 
         // Execute this feedback
         let ret = self.is_interesting(state, manager, input, observers, exit_kind);
 
         // Get the elapsed time for checking this feedback
-        let elapsed = crate::bolts::cpu::read_time_counter() - start_time;
+        let elapsed = libafl_bolts::cpu::read_time_counter() - start_time;
 
         // Add this stat to the feedback metrics
         state
@@ -108,14 +112,16 @@ where
     /// Append to the testcase the generated metadata in case of a new corpus item
     #[inline]
     #[allow(unused_variables)]
-    fn append_metadata<OT>(
+    fn append_metadata<EM, OT>(
         &mut self,
         state: &mut S,
+        manager: &mut EM,
         observers: &OT,
         testcase: &mut Testcase<S::Input>,
     ) -> Result<(), Error>
     where
         OT: ObserversTuple<S>,
+        EM: EventFirer<State = S>,
     {
         Ok(())
     }
@@ -140,7 +146,7 @@ where
     A: Feedback<S>,
     B: Feedback<S>,
     FL: FeedbackLogic<A, B, S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// First [`Feedback`]
     pub first: A,
@@ -155,7 +161,7 @@ where
     A: Feedback<S>,
     B: Feedback<S>,
     FL: FeedbackLogic<A, B, S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn name(&self) -> &str {
         self.name.as_ref()
@@ -167,7 +173,7 @@ where
     A: Feedback<S>,
     B: Feedback<S>,
     FL: FeedbackLogic<A, B, S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// Create a new combined feedback
     pub fn new(first: A, second: B) -> Self {
@@ -186,7 +192,7 @@ where
     A: Feedback<S>,
     B: Feedback<S>,
     FL: FeedbackLogic<A, B, S>,
-    S: UsesInput + HasClientPerfMonitor + Debug,
+    S: State,
 {
     fn init_state(&mut self, state: &mut S) -> Result<(), Error> {
         self.first.init_state(state)?;
@@ -244,17 +250,21 @@ where
     }
 
     #[inline]
-    fn append_metadata<OT>(
+    fn append_metadata<EM, OT>(
         &mut self,
         state: &mut S,
+        manager: &mut EM,
         observers: &OT,
         testcase: &mut Testcase<S::Input>,
     ) -> Result<(), Error>
     where
         OT: ObserversTuple<S>,
+        EM: EventFirer<State = S>,
     {
-        self.first.append_metadata(state, observers, testcase)?;
-        self.second.append_metadata(state, observers, testcase)
+        self.first
+            .append_metadata(state, manager, observers, testcase)?;
+        self.second
+            .append_metadata(state, manager, observers, testcase)
     }
 
     #[inline]
@@ -265,11 +275,11 @@ where
 }
 
 /// Logical combination of two feedbacks
-pub trait FeedbackLogic<A, B, S>: 'static + Debug
+pub trait FeedbackLogic<A, B, S>: 'static
 where
     A: Feedback<S>,
     B: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// The name of this combination
     fn name() -> &'static str;
@@ -310,7 +320,7 @@ where
 pub trait FeedbackFactory<F, S, T>
 where
     F: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// Create the feedback from the provided context
     fn create_feedback(&self, ctx: &T) -> F;
@@ -320,7 +330,7 @@ impl<FE, FU, S, T> FeedbackFactory<FE, S, T> for FU
 where
     FU: Fn(&T) -> FE,
     FE: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn create_feedback(&self, ctx: &T) -> FE {
         self(ctx)
@@ -350,7 +360,7 @@ where
 impl<F, S, T> FeedbackFactory<F, S, T> for DefaultFeedbackFactory<F>
 where
     F: Feedback<S> + Default,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn create_feedback(&self, _ctx: &T) -> F {
         F::default()
@@ -377,7 +387,7 @@ impl<A, B, S> FeedbackLogic<A, B, S> for LogicEagerOr
 where
     A: Feedback<S>,
     B: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn name() -> &'static str {
         "Eager OR"
@@ -427,7 +437,7 @@ impl<A, B, S> FeedbackLogic<A, B, S> for LogicFastOr
 where
     A: Feedback<S>,
     B: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn name() -> &'static str {
         "Fast OR"
@@ -483,7 +493,7 @@ impl<A, B, S> FeedbackLogic<A, B, S> for LogicEagerAnd
 where
     A: Feedback<S>,
     B: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn name() -> &'static str {
         "Eager AND"
@@ -533,7 +543,7 @@ impl<A, B, S> FeedbackLogic<A, B, S> for LogicFastAnd
 where
     A: Feedback<S>,
     B: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn name() -> &'static str {
         "Fast AND"
@@ -608,7 +618,7 @@ pub type FastOrFeedback<A, B, S> = CombinedFeedback<A, B, LogicFastOr, S>;
 pub struct NotFeedback<A, S>
 where
     A: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// The feedback to invert
     pub first: A,
@@ -619,8 +629,8 @@ where
 
 impl<A, S> Debug for NotFeedback<A, S>
 where
-    A: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    A: Feedback<S> + Debug,
+    S: State,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_struct("NotFeedback")
@@ -633,7 +643,7 @@ where
 impl<A, S> Feedback<S> for NotFeedback<A, S>
 where
     A: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     fn init_state(&mut self, state: &mut S) -> Result<(), Error> {
         self.first.init_state(state)
@@ -658,16 +668,19 @@ where
     }
 
     #[inline]
-    fn append_metadata<OT>(
+    fn append_metadata<EM, OT>(
         &mut self,
         state: &mut S,
+        manager: &mut EM,
         observers: &OT,
         testcase: &mut Testcase<S::Input>,
     ) -> Result<(), Error>
     where
         OT: ObserversTuple<S>,
+        EM: EventFirer<State = S>,
     {
-        self.first.append_metadata(state, observers, testcase)
+        self.first
+            .append_metadata(state, manager, observers, testcase)
     }
 
     #[inline]
@@ -679,7 +692,7 @@ where
 impl<A, S> Named for NotFeedback<A, S>
 where
     A: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     #[inline]
     fn name(&self) -> &str {
@@ -690,7 +703,7 @@ where
 impl<A, S> NotFeedback<A, S>
 where
     A: Feedback<S>,
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     /// Creates a new [`NotFeedback`].
     pub fn new(first: A) -> Self {
@@ -758,7 +771,7 @@ macro_rules! feedback_not {
 /// Hack to use () as empty Feedback
 impl<S> Feedback<S> for ()
 where
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     #[allow(clippy::wrong_self_convention)]
     fn is_interesting<EM, OT>(
@@ -777,20 +790,13 @@ where
     }
 }
 
-impl Named for () {
-    #[inline]
-    fn name(&self) -> &str {
-        "Empty"
-    }
-}
-
 /// A [`CrashFeedback`] reports as interesting if the target crashed.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CrashFeedback {}
 
 impl<S> Feedback<S> for CrashFeedback
 where
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     #[allow(clippy::wrong_self_convention)]
     fn is_interesting<EM, OT>(
@@ -843,7 +849,7 @@ pub struct TimeoutFeedback {}
 
 impl<S> Feedback<S> for TimeoutFeedback
 where
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     #[allow(clippy::wrong_self_convention)]
     fn is_interesting<EM, OT>(
@@ -900,7 +906,7 @@ pub struct TimeFeedback {
 
 impl<S> Feedback<S> for TimeFeedback
 where
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     #[allow(clippy::wrong_self_convention)]
     fn is_interesting<EM, OT>(
@@ -921,14 +927,16 @@ where
 
     /// Append to the testcase the generated metadata in case of a new corpus item
     #[inline]
-    fn append_metadata<OT>(
+    fn append_metadata<EM, OT>(
         &mut self,
         _state: &mut S,
+        _manager: &mut EM,
         observers: &OT,
         testcase: &mut Testcase<S::Input>,
     ) -> Result<(), Error>
     where
         OT: ObserversTuple<S>,
+        EM: EventFirer<State = S>,
     {
         let observer = observers.match_name::<TimeObserver>(self.name()).unwrap();
         *testcase.exec_time_mut() = *observer.last_runtime();
@@ -967,79 +975,6 @@ impl TimeFeedback {
     }
 }
 
-/// Consider interesting a testcase if the list in `ListObserver` is not empty.
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ListFeedback<T>
-where
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    name: String,
-    last_addr: usize,
-    phantom: PhantomData<T>,
-}
-
-impl<S, T> Feedback<S> for ListFeedback<T>
-where
-    S: UsesInput + HasClientPerfMonitor,
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    #[allow(clippy::wrong_self_convention)]
-    fn is_interesting<EM, OT>(
-        &mut self,
-        _state: &mut S,
-        _manager: &mut EM,
-        _input: &S::Input,
-        observers: &OT,
-        _exit_kind: &ExitKind,
-    ) -> Result<bool, Error>
-    where
-        EM: EventFirer<State = S>,
-        OT: ObserversTuple<S>,
-    {
-        // TODO Replace with match_name_type when stable
-        let observer = observers
-            .match_name::<ListObserver<T>>(self.name())
-            .unwrap();
-        // TODO register the list content in a testcase metadata
-        Ok(!observer.list().is_empty())
-    }
-}
-
-impl<T> Named for ListFeedback<T>
-where
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    #[inline]
-    fn name(&self) -> &str {
-        self.name.as_str()
-    }
-}
-
-impl<T> ListFeedback<T>
-where
-    T: Debug + Serialize + serde::de::DeserializeOwned,
-{
-    /// Creates a new [`ListFeedback`], deciding if the value of a [`ListObserver`] with the given `name` of a run is interesting.
-    #[must_use]
-    pub fn new(name: &'static str) -> Self {
-        Self {
-            name: name.to_string(),
-            last_addr: 0,
-            phantom: PhantomData,
-        }
-    }
-
-    /// Creates a new [`TimeFeedback`], deciding if the given [`ListObserver`] value of a run is interesting.
-    #[must_use]
-    pub fn with_observer(observer: &ListObserver<T>) -> Self {
-        Self {
-            name: observer.name().to_string(),
-            last_addr: 0,
-            phantom: PhantomData,
-        }
-    }
-}
-
 /// The [`ConstFeedback`] reports the same value, always.
 /// It can be used to enable or disable feedback results through composition.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1052,7 +987,7 @@ pub enum ConstFeedback {
 
 impl<S> Feedback<S> for ConstFeedback
 where
-    S: UsesInput + HasClientPerfMonitor,
+    S: State,
 {
     #[inline]
     #[allow(clippy::wrong_self_convention)]
@@ -1102,10 +1037,13 @@ impl From<bool> for ConstFeedback {
 
 /// `Feedback` Python bindings
 #[cfg(feature = "python")]
+#[allow(clippy::unnecessary_fallible_conversions, unused_qualifications)]
 #[allow(missing_docs)]
 pub mod pybind {
+    use core::ptr;
     use std::cell::UnsafeCell;
 
+    use libafl_bolts::Named;
     use pyo3::prelude::*;
 
     use super::{
@@ -1113,7 +1051,6 @@ pub mod pybind {
         FastOrFeedback, Feedback, NotFeedback, String, ToString,
     };
     use crate::{
-        bolts::tuples::Named,
         corpus::{testcase::pybind::PythonTestcaseWrapper, Testcase},
         events::{pybind::PythonEventManager, EventFirer},
         executors::{pybind::PythonExitKind, ExitKind},
@@ -1191,11 +1128,12 @@ pub mod pybind {
             EM: EventFirer<State = PythonStdState>,
             OT: ObserversTuple<PythonStdState>,
         {
-            // SAFETY: We use this observer in Python ony when the ObserverTuple is PythonObserversTuple
+            // # Safety
+            // We use this observer in Python ony when the ObserverTuple is PythonObserversTuple
             let dont_look_at_this: &PythonObserversTuple =
-                unsafe { &*(observers as *const OT as *const PythonObserversTuple) };
+                unsafe { &*(ptr::from_ref(observers) as *const PythonObserversTuple) };
             let dont_look_at_this2: &PythonEventManager =
-                unsafe { &*(manager as *mut EM as *const PythonEventManager) };
+                unsafe { &*(ptr::from_mut(manager) as *const PythonEventManager) };
             Ok(Python::with_gil(|py| -> PyResult<bool> {
                 let r: bool = self
                     .inner
@@ -1215,18 +1153,20 @@ pub mod pybind {
             })?)
         }
 
-        fn append_metadata<OT>(
+        fn append_metadata<EM, OT>(
             &mut self,
             state: &mut PythonStdState,
+            _manager: &mut EM,
             observers: &OT,
             testcase: &mut Testcase<BytesInput>,
         ) -> Result<(), Error>
         where
             OT: ObserversTuple<PythonStdState>,
         {
-            // SAFETY: We use this observer in Python ony when the ObserverTuple is PythonObserversTuple
+            // # Safety
+            // We use this observer in Python ony when the ObserverTuple is PythonObserversTuple
             let dont_look_at_this: &PythonObserversTuple =
-                unsafe { &*(observers as *const OT as *const PythonObserversTuple) };
+                unsafe { &*(ptr::from_ref(observers) as *const PythonObserversTuple) };
             Python::with_gil(|py| -> PyResult<()> {
                 self.inner.call_method1(
                     py,
@@ -1402,7 +1342,7 @@ pub mod pybind {
 
     macro_rules! unwrap_me {
         ($wrapper:expr, $name:ident, $body:block) => {
-            crate::unwrap_me_body!($wrapper, $name, $body, PythonFeedbackWrapper,
+            libafl_bolts::unwrap_me_body!($wrapper, $name, $body, PythonFeedbackWrapper,
                 {
                     MaxMapI8,
                     MaxMapI16,
@@ -1432,7 +1372,7 @@ pub mod pybind {
 
     macro_rules! unwrap_me_mut {
         ($wrapper:expr, $name:ident, $body:block) => {
-            crate::unwrap_me_mut_body!($wrapper, $name, $body, PythonFeedbackWrapper,
+            libafl_bolts::unwrap_me_mut_body!($wrapper, $name, $body, PythonFeedbackWrapper,
                 {
                     MaxMapI8,
                     MaxMapI16,
@@ -1657,17 +1597,19 @@ pub mod pybind {
             })
         }
 
-        fn append_metadata<OT>(
+        fn append_metadata<EM, OT>(
             &mut self,
             state: &mut PythonStdState,
+            manager: &mut EM,
             observers: &OT,
             testcase: &mut Testcase<BytesInput>,
         ) -> Result<(), Error>
         where
             OT: ObserversTuple<PythonStdState>,
+            EM: EventFirer<State = PythonStdState>,
         {
             unwrap_me_mut!(self.wrapper, f, {
-                f.append_metadata(state, observers, testcase)
+                f.append_metadata(state, manager, observers, testcase)
             })
         }
 

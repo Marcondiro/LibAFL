@@ -5,18 +5,9 @@ use core::fmt::{self, Debug, Formatter};
 use std::{fs, net::SocketAddr, path::PathBuf, time::Duration};
 
 use libafl::{
-    bolts::{
-        core_affinity::Cores,
-        current_nanos,
-        launcher::Launcher,
-        rands::StdRand,
-        shmem::{ShMemProvider, StdShMemProvider},
-        tuples::{tuple_list, Merge},
-        AsSlice,
-    },
     corpus::{CachedOnDiskCorpus, Corpus, OnDiskCorpus},
-    events::{EventConfig, EventRestarter, LlmpRestartingEventManager},
-    executors::{inprocess::InProcessExecutor, ExitKind, ShadowExecutor, TimeoutExecutor},
+    events::{launcher::Launcher, EventConfig, EventRestarter, LlmpRestartingEventManager},
+    executors::{inprocess::InProcessExecutor, ExitKind, ShadowExecutor},
     feedback_or, feedback_or_fast,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback, TimeoutFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
@@ -32,6 +23,14 @@ use libafl::{
     stages::{ShadowTracingStage, StdMutationalStage},
     state::{HasCorpus, HasMetadata, StdState},
     Error,
+};
+use libafl_bolts::{
+    core_affinity::Cores,
+    current_nanos,
+    rands::StdRand,
+    shmem::{ShMemProvider, StdShMemProvider},
+    tuples::{tuple_list, Merge},
+    AsSlice,
 };
 use libafl_targets::{std_edges_map_observer, CmpLogObserver};
 use typed_builder::TypedBuilder;
@@ -58,7 +57,7 @@ where
     /// Dictionary
     #[builder(default = None)]
     tokens_file: Option<PathBuf>,
-    /// Flag if use CmpLog
+    /// Flag if use `CmpLog`
     #[builder(default = None)]
     use_cmplog: Option<bool>,
     /// The port used for communication between this fuzzer node and other fuzzer nodes
@@ -140,7 +139,7 @@ where
         let monitor = MultiMonitor::new(|s| println!("{s}"));
 
         let mut run_client = |state: Option<_>,
-                              mut mgr: LlmpRestartingEventManager<_, _>,
+                              mut mgr: LlmpRestartingEventManager<_, _, _>,
                               _core_id| {
             // Create an observation channel using the coverage map
             let edges_observer =
@@ -202,16 +201,14 @@ where
 
             // Create the executor for an in-process function with one observer for edge coverage and one for the execution time
             let mut executor = ShadowExecutor::new(
-                TimeoutExecutor::new(
-                    InProcessExecutor::new(
-                        &mut harness,
-                        tuple_list!(edges_observer, time_observer),
-                        &mut fuzzer,
-                        &mut state,
-                        &mut mgr,
-                    )?,
+                InProcessExecutor::with_timeout(
+                    &mut harness,
+                    tuple_list!(edges_observer, time_observer),
+                    &mut fuzzer,
+                    &mut state,
+                    &mut mgr,
                     timeout,
-                ),
+                )?,
                 tuple_list!(cmplog_observer),
             );
 
@@ -357,7 +354,7 @@ where
 pub mod pybind {
     use std::path::PathBuf;
 
-    use libafl::bolts::core_affinity::Cores;
+    use libafl_bolts::core_affinity::Cores;
     use pyo3::{prelude::*, types::PyBytes};
 
     use crate::inmemory;

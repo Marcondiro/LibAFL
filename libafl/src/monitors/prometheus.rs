@@ -31,6 +31,7 @@ use std::{
 
 // using thread in order to start the HTTP server in a separate thread
 use futures::executor::block_on;
+use libafl_bolts::{current_time, format_duration_hms, ClientId};
 // using the official rust client library for Prometheus: https://github.com/prometheus/client_rust
 use prometheus_client::{
     encoding::{text::encode, EncodeLabelSet},
@@ -40,16 +41,13 @@ use prometheus_client::{
 // using tide for the HTTP server library (fast, async, simple)
 use tide::Request;
 
-use crate::{
-    bolts::{current_time, format_duration_hms, ClientId},
-    monitors::{ClientStats, Monitor, UserStats},
-};
+use crate::monitors::{ClientStats, Monitor, UserStatsValue};
 
 /// Tracking monitor during fuzzing.
 #[derive(Clone)]
 pub struct PrometheusMonitor<F>
 where
-    F: FnMut(String),
+    F: FnMut(&str),
 {
     print_fn: F,
     start_time: Duration,
@@ -65,19 +63,19 @@ where
 
 impl<F> Debug for PrometheusMonitor<F>
 where
-    F: FnMut(String),
+    F: FnMut(&str),
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PrometheusMonitor")
             .field("start_time", &self.start_time)
             .field("client_stats", &self.client_stats)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl<F> Monitor for PrometheusMonitor<F>
 where
-    F: FnMut(String),
+    F: FnMut(&str),
 {
     /// the client monitor, mutable
     fn client_stats_mut(&mut self) -> &mut Vec<ClientStats> {
@@ -90,12 +88,17 @@ where
     }
 
     /// Time this fuzzing run stated
-    fn start_time(&mut self) -> Duration {
+    fn start_time(&self) -> Duration {
         self.start_time
     }
 
+    /// Set creation time
+    fn set_start_time(&mut self, time: Duration) {
+        self.start_time = time;
+    }
+
     #[allow(clippy::cast_sign_loss)]
-    fn display(&mut self, event_msg: String, sender_id: ClientId) {
+    fn display(&mut self, event_msg: &str, sender_id: ClientId) {
         // Update the prometheus metrics
         // Label each metric with the sender / client_id
         // The gauges must take signed i64's, with max value of 2^63-1 so it is
@@ -159,8 +162,9 @@ where
             self.total_execs(),
             self.execs_per_sec_pretty()
         );
-        (self.print_fn)(fmt);
+        (self.print_fn)(&fmt);
 
+        self.client_stats_insert(sender_id);
         let cur_client = self.client_stats_mut_for(sender_id);
         let cur_client_clone = cur_client.clone();
 
@@ -169,11 +173,12 @@ where
             // You can filter for each custom stat in promQL via labels of both the stat name and client id
             log::info!("{key}: {val}");
             #[allow(clippy::cast_precision_loss)]
-            let value: f64 = match val {
-                UserStats::Number(n) => n as f64,
-                UserStats::Float(f) => f,
-                UserStats::String(_s) => 0.0,
-                UserStats::Ratio(a, b) => (a as f64 / b as f64) * 100.0,
+            let value: f64 = match val.value() {
+                UserStatsValue::Number(n) => *n as f64,
+                UserStatsValue::Float(f) => *f,
+                UserStatsValue::String(_s) => 0.0,
+                UserStatsValue::Ratio(a, b) => (*a as f64 / *b as f64) * 100.0,
+                UserStatsValue::Percent(p) => *p * 100.0,
             };
             self.custom_stat
                 .get_or_create(&Labels {
@@ -187,7 +192,7 @@ where
 
 impl<F> PrometheusMonitor<F>
 where
-    F: FnMut(String),
+    F: FnMut(&str),
 {
     pub fn new(listener: String, print_fn: F) -> Self {
         // Gauge's implementation of clone uses Arc

@@ -7,16 +7,16 @@ use core::{
     marker::PhantomData,
 };
 
+use libafl_bolts::{tuples::MatchName, Named};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bolts::tuples::{MatchName, Named},
     events::EventFirer,
     executors::ExitKind,
     feedbacks::Feedback,
     inputs::Input,
     observers::{Observer, ObserversTuple},
-    state::{HasClientPerfMonitor, HasMetadata, State},
+    state::{HasMetadata, State},
     Error,
 };
 
@@ -119,8 +119,8 @@ impl<F, I, O1, O2, S> Feedback<S> for DiffFeedback<F, I, O1, O2, S>
 where
     F: FnMut(&O1, &O2) -> DiffResult,
     I: Input,
-    S: HasMetadata + HasClientPerfMonitor + State<Input = I>,
-    O1: Observer<S> + PartialEq<O2>,
+    S: HasMetadata + State<Input = I>,
+    O1: Observer<S>,
     O2: Observer<S>,
 {
     #[allow(clippy::wrong_self_convention)]
@@ -155,14 +155,15 @@ mod tests {
     use alloc::string::{String, ToString};
     use core::marker::PhantomData;
 
+    use libafl_bolts::{tuples::tuple_list, Named};
+
     use crate::{
-        bolts::tuples::{tuple_list, Named},
         events::EventFirer,
         executors::ExitKind,
         feedbacks::{differential::DiffResult, DiffFeedback, Feedback},
         inputs::{BytesInput, UsesInput},
         observers::Observer,
-        state::{NopState, UsesState},
+        state::{NopState, State, UsesState},
     };
 
     #[derive(Debug)]
@@ -195,13 +196,13 @@ mod tests {
     }
     impl<S> UsesState for NopEventFirer<S>
     where
-        S: UsesInput,
+        S: State,
     {
         type State = S;
     }
     impl<S> EventFirer for NopEventFirer<S>
     where
-        S: UsesInput,
+        S: State,
     {
         fn fire(
             &mut self,

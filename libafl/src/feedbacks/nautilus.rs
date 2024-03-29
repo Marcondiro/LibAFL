@@ -4,19 +4,18 @@ use core::{fmt::Debug, marker::PhantomData};
 use std::fs::create_dir_all;
 
 use grammartec::{chunkstore::ChunkStore, context::Context};
+use libafl_bolts::Named;
 use serde::{Deserialize, Serialize};
-use serde_json;
 
 use crate::{
-    bolts::tuples::Named,
     corpus::{Corpus, Testcase},
     events::EventFirer,
     executors::ExitKind,
     feedbacks::Feedback,
     generators::NautilusContext,
-    inputs::{NautilusInput, UsesInput},
+    inputs::NautilusInput,
     observers::ObserversTuple,
-    state::{HasClientPerfMonitor, HasCorpus, HasMetadata},
+    state::{HasCorpus, HasMetadata, State},
     Error,
 };
 
@@ -37,7 +36,7 @@ impl Debug for NautilusChunksMetadata {
     }
 }
 
-crate::impl_serdeany!(NautilusChunksMetadata);
+libafl_bolts::impl_serdeany!(NautilusChunksMetadata);
 
 impl NautilusChunksMetadata {
     /// Creates a new [`NautilusChunksMetadata`]
@@ -82,10 +81,7 @@ impl<'a, S> Named for NautilusFeedback<'a, S> {
 
 impl<'a, S> Feedback<S> for NautilusFeedback<'a, S>
 where
-    S: HasMetadata
-        + HasClientPerfMonitor
-        + UsesInput<Input = NautilusInput>
-        + HasCorpus<Input = NautilusInput>,
+    S: HasMetadata + HasCorpus<Input = NautilusInput> + State<Input = NautilusInput>,
 {
     #[allow(clippy::wrong_self_convention)]
     fn is_interesting<EM, OT>(
@@ -103,9 +99,10 @@ where
         Ok(false)
     }
 
-    fn append_metadata<OT>(
+    fn append_metadata<EM, OT>(
         &mut self,
         state: &mut S,
+        _manager: &mut EM,
         _observers: &OT,
         testcase: &mut Testcase<S::Input>,
     ) -> Result<(), Error>

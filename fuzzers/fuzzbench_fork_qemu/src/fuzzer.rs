@@ -9,18 +9,11 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     process,
+    time::Duration,
 };
 
 use clap::{Arg, Command};
 use libafl::{
-    bolts::{
-        current_nanos, current_time,
-        os::dup2,
-        rands::StdRand,
-        shmem::{ShMemProvider, StdShMemProvider},
-        tuples::{tuple_list, Merge},
-        AsMutSlice, AsSlice,
-    },
     corpus::{Corpus, InMemoryOnDiskCorpus, OnDiskCorpus},
     events::SimpleRestartingEventManager,
     executors::{ExitKind, ShadowExecutor},
@@ -44,14 +37,22 @@ use libafl::{
     state::{HasCorpus, HasMetadata, StdState},
     Error,
 };
+use libafl_bolts::{
+    current_nanos, current_time,
+    os::{dup2, unix_signals::Signal},
+    rands::StdRand,
+    shmem::{ShMemProvider, StdShMemProvider},
+    tuples::{tuple_list, Merge},
+    AsMutSlice, AsSlice,
+};
 use libafl_qemu::{
     cmplog::{CmpLogMap, CmpLogObserver, QemuCmpLogChildHelper},
     edges::{QemuEdgeCoverageChildHelper, EDGES_MAP_PTR, EDGES_MAP_SIZE},
     elf::EasyElf,
-    emu::Emulator,
     filter_qemu_args,
     hooks::QemuHooks,
-    MmapPerms, QemuForkExecutor, Regs,
+    GuestReg, MmapPerms, Qemu, QemuExitReason, QemuExitReasonError, QemuForkExecutor,
+    QemuShutdownCause, Regs,
 };
 #[cfg(unix)]
 use nix::{self, unistd::dup};
@@ -60,7 +61,7 @@ use nix::{self, unistd::dup};
 pub fn main() {
     // Registry the metadata types used in this fuzzer
     // Needed only on no_std
-    //RegistryBuilder::register::<Tokens>();
+    // unsafe { RegistryBuilder::register::<Tokens>(); }
 
     let res = match Command::new(env!("CARGO_PKG_NAME"))
         .version(env!("CARGO_PKG_VERSION"))
@@ -147,33 +148,38 @@ fn fuzz(
 
     let args: Vec<String> = env::args().collect();
     let env: Vec<(String, String)> = env::vars().collect();
-    let emu = Emulator::new(&args, &env)?;
+    let qemu = Qemu::init(&args, &env)?;
 
     let mut elf_buffer = Vec::new();
-    let elf = EasyElf::from_file(emu.binary_path(), &mut elf_buffer)?;
+    let elf = EasyElf::from_file(qemu.binary_path(), &mut elf_buffer)?;
 
     let test_one_input_ptr = elf
-        .resolve_symbol("LLVMFuzzerTestOneInput", emu.load_addr())
+        .resolve_symbol("LLVMFuzzerTestOneInput", qemu.load_addr())
         .expect("Symbol LLVMFuzzerTestOneInput not found");
     println!("LLVMFuzzerTestOneInput @ {test_one_input_ptr:#x}");
 
-    emu.set_breakpoint(test_one_input_ptr); // LLVMFuzzerTestOneInput
-    unsafe { emu.run() };
+    qemu.set_breakpoint(test_one_input_ptr); // LLVMFuzzerTestOneInput
+    unsafe {
+        match qemu.run() {
+            Ok(QemuExitReason::Breakpoint(_)) => {}
+            _ => panic!("Unexpected QEMU exit."),
+        }
+    }
 
-    println!("Break at {:#x}", emu.read_reg::<_, u64>(Regs::Rip).unwrap());
+    println!("Break at {:#x}", qemu.read_reg::<_, u64>(Regs::Pc).unwrap());
 
-    let stack_ptr: u64 = emu.read_reg(Regs::Rsp).unwrap();
+    let stack_ptr: u64 = qemu.read_reg(Regs::Sp).unwrap();
     let mut ret_addr = [0; 8];
-    unsafe { emu.read_mem(stack_ptr, &mut ret_addr) };
+    unsafe { qemu.read_mem(stack_ptr, &mut ret_addr) };
     let ret_addr = u64::from_le_bytes(ret_addr);
 
     println!("Stack pointer = {stack_ptr:#x}");
     println!("Return address = {ret_addr:#x}");
 
-    emu.remove_breakpoint(test_one_input_ptr); // LLVMFuzzerTestOneInput
-    emu.set_breakpoint(ret_addr); // LLVMFuzzerTestOneInput ret addr
+    qemu.remove_breakpoint(test_one_input_ptr); // LLVMFuzzerTestOneInput
+    qemu.set_breakpoint(ret_addr); // LLVMFuzzerTestOneInput ret addr
 
-    let input_addr = emu.map_private(0, 4096, MmapPerms::ReadWrite).unwrap();
+    let input_addr = qemu.map_private(0, 4096, MmapPerms::ReadWrite).unwrap();
     println!("Placing input at {input_addr:#x}");
 
     let log = RefCell::new(
@@ -209,9 +215,7 @@ fn fuzz(
     let edges = edges_shmem.as_mut_slice();
     unsafe { EDGES_MAP_PTR = edges.as_mut_ptr() };
 
-    let mut cmp_shmem = shmem_provider
-        .new_shmem(core::mem::size_of::<CmpLogMap>())
-        .unwrap();
+    let mut cmp_shmem = shmem_provider.uninit_on_shmem::<CmpLogMap>().unwrap();
     let cmplog = cmp_shmem.as_mut_slice();
 
     // Beginning of a page should be properly aligned.
@@ -315,21 +319,28 @@ fn fuzz(
         }
 
         unsafe {
-            emu.write_mem(input_addr, buf);
+            qemu.write_mem(input_addr, buf);
 
-            emu.write_reg(Regs::Rdi, input_addr).unwrap();
-            emu.write_reg(Regs::Rsi, len).unwrap();
-            emu.write_reg(Regs::Rip, test_one_input_ptr).unwrap();
-            emu.write_reg(Regs::Rsp, stack_ptr).unwrap();
+            qemu.write_reg(Regs::Rdi, input_addr).unwrap();
+            qemu.write_reg(Regs::Rsi, len as GuestReg).unwrap();
+            qemu.write_reg(Regs::Rip, test_one_input_ptr).unwrap();
+            qemu.write_reg(Regs::Rsp, stack_ptr).unwrap();
 
-            emu.run();
+            match qemu.run() {
+                Ok(QemuExitReason::Breakpoint(_)) => {}
+                Ok(QemuExitReason::End(QemuShutdownCause::HostSignal(Signal::SigInterrupt))) => {
+                    process::exit(0)
+                }
+                Err(QemuExitReasonError::UnexpectedExit) => return ExitKind::Crash,
+                _ => panic!("Unexpected QEMU exit."),
+            }
         }
 
         ExitKind::Ok
     };
 
     let mut hooks = QemuHooks::new(
-        &emu,
+        qemu.clone(),
         tuple_list!(
             QemuEdgeCoverageChildHelper::default(),
             QemuCmpLogChildHelper::default(),
@@ -344,6 +355,7 @@ fn fuzz(
         &mut state,
         &mut mgr,
         shmem_provider,
+        Duration::from_millis(5000),
     )?;
 
     // Show the cmplog observer
@@ -371,7 +383,7 @@ fn fuzz(
     // The order of the stages matter!
     let mut stages = tuple_list!(calibration, tracing, i2s, power);
 
-    // Remove target ouput (logs still survive)
+    // Remove target output (logs still survive)
     #[cfg(unix)]
     {
         let null_fd = file_null.as_raw_fd();

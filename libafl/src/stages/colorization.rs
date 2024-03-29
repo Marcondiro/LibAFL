@@ -1,4 +1,4 @@
-//! The colorization stage from colorization() in afl++
+//! The colorization stage from `colorization()` in afl++
 use alloc::{
     collections::binary_heap::BinaryHeap,
     string::{String, ToString},
@@ -6,18 +6,17 @@ use alloc::{
 };
 use core::{cmp::Ordering, fmt::Debug, marker::PhantomData, ops::Range};
 
+use libafl_bolts::{rands::Rand, tuples::MatchName, Named};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    bolts::{rands::Rand, tuples::MatchName},
-    corpus::{Corpus, CorpusId},
     events::EventFirer,
     executors::{Executor, HasObservers},
     inputs::HasBytesVec,
     mutators::mutations::buffer_copy,
     observers::{MapObserver, ObserversTuple},
-    stages::Stage,
-    state::{HasCorpus, HasMetadata, HasRand, UsesState},
+    stages::{RetryRestartHelper, Stage},
+    state::{HasCorpus, HasCurrentTestcase, HasMetadata, HasNamedMetadata, HasRand, UsesState},
     Error,
 };
 
@@ -27,7 +26,7 @@ struct Bigger(Range<usize>);
 
 impl PartialOrd for Bigger {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.0.len().partial_cmp(&other.0.len())
+        Some(self.cmp(other))
     }
 }
 
@@ -43,7 +42,7 @@ struct Earlier(Range<usize>);
 
 impl PartialOrd for Earlier {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        other.0.start.partial_cmp(&self.0.start)
+        Some(self.cmp(other))
     }
 }
 
@@ -68,11 +67,20 @@ where
     type State = E::State;
 }
 
+impl<EM, O, E, Z> Named for ColorizationStage<EM, O, E, Z>
+where
+    E: UsesState,
+{
+    fn name(&self) -> &str {
+        &self.map_observer_name
+    }
+}
+
 impl<E, EM, O, Z> Stage<E, EM, Z> for ColorizationStage<EM, O, E, Z>
 where
     EM: UsesState<State = E::State> + EventFirer,
     E: HasObservers + Executor<EM, Z>,
-    E::State: HasCorpus + HasMetadata + HasRand,
+    E::State: HasCorpus + HasMetadata + HasRand + HasNamedMetadata,
     E::Input: HasBytesVec,
     O: MapObserver,
     Z: UsesState<State = E::State>,
@@ -85,24 +93,30 @@ where
         executor: &mut E, // don't need the *main* executor for tracing
         state: &mut E::State,
         manager: &mut EM,
-        corpus_idx: CorpusId,
     ) -> Result<(), Error> {
         // Run with the mutated input
-        Self::colorize(
-            fuzzer,
-            executor,
-            state,
-            manager,
-            corpus_idx,
-            &self.map_observer_name,
-        )?;
+        Self::colorize(fuzzer, executor, state, manager, &self.map_observer_name)?;
 
         Ok(())
     }
+
+    fn restart_progress_should_run(&mut self, state: &mut Self::State) -> Result<bool, Error> {
+        // TODO this stage needs a proper resume
+        RetryRestartHelper::restart_progress_should_run(state, self, 3)
+    }
+
+    fn clear_restart_progress(&mut self, state: &mut Self::State) -> Result<(), Error> {
+        // TODO this stage needs a proper resume
+        RetryRestartHelper::clear_restart_progress(state, self)
+    }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
 /// Store the taint and the input
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(
+    any(not(feature = "serdeany_autoreg"), miri),
+    allow(clippy::unsafe_derive_deserialize)
+)] // for SerdeAny
 pub struct TaintMetadata {
     input_vec: Vec<u8>,
     ranges: Vec<Range<usize>>,
@@ -134,7 +148,7 @@ impl TaintMetadata {
     }
 }
 
-crate::impl_serdeany!(TaintMetadata);
+libafl_bolts::impl_serdeany!(TaintMetadata);
 
 impl<EM, O, E, Z> ColorizationStage<EM, O, E, Z>
 where
@@ -152,10 +166,9 @@ where
         executor: &mut E,
         state: &mut E::State,
         manager: &mut EM,
-        corpus_idx: CorpusId,
         name: &str,
     ) -> Result<E::Input, Error> {
-        let mut input = state.corpus().cloned_input_for_id(corpus_idx)?;
+        let mut input = state.current_input_cloned()?;
         // The backup of the input
         let backup = input.clone();
         // This is the buffer we'll randomly mutate during type_replace

@@ -9,16 +9,9 @@ use std::{
 
 use clap::{Arg, ArgAction, Command};
 use libafl::{
-    bolts::{
-        current_nanos, current_time,
-        rands::StdRand,
-        shmem::{ShMem, ShMemProvider, UnixShMemProvider},
-        tuples::{tuple_list, Merge},
-        AsMutSlice,
-    },
     corpus::{Corpus, InMemoryOnDiskCorpus, OnDiskCorpus},
     events::SimpleEventManager,
-    executors::forkserver::{ForkserverExecutor, TimeoutForkserverExecutor},
+    executors::forkserver::ForkserverExecutor,
     feedback_or,
     feedbacks::{CrashFeedback, MaxMapFeedback, TimeFeedback},
     fuzzer::{Fuzzer, StdFuzzer},
@@ -28,7 +21,7 @@ use libafl::{
         scheduled::havoc_mutations, token_mutations::I2SRandReplace, tokens_mutations,
         StdMOptMutator, StdScheduledMutator, Tokens,
     },
-    observers::{AFLppCmpMap, HitcountsMapObserver, StdCmpObserver, StdMapObserver, TimeObserver},
+    observers::{HitcountsMapObserver, StdCmpValuesObserver, StdMapObserver, TimeObserver},
     schedulers::{
         powersched::PowerSchedule, IndexesLenTimeMinimizerScheduler, StdWeightedScheduler,
     },
@@ -39,6 +32,15 @@ use libafl::{
     state::{HasCorpus, HasMetadata, StdState},
     Error,
 };
+use libafl_bolts::{
+    current_nanos, current_time,
+    ownedref::OwnedRefMut,
+    rands::StdRand,
+    shmem::{ShMem, ShMemProvider, UnixShMemProvider},
+    tuples::{tuple_list, Merge},
+    AsMutSlice,
+};
+use libafl_targets::cmps::AFLppCmpLogMap;
 use nix::sys::signal::Signal;
 
 pub fn main() {
@@ -203,6 +205,7 @@ pub fn main() {
 }
 
 /// The actual fuzzer
+#[allow(clippy::too_many_arguments)]
 fn fuzz(
     corpus_dir: PathBuf,
     objective_dir: PathBuf,
@@ -307,19 +310,18 @@ fn fuzz(
     let mut fuzzer = StdFuzzer::new(scheduler, feedback, objective);
 
     let mut tokens = Tokens::new();
-    let forkserver = ForkserverExecutor::builder()
+    let mut executor = ForkserverExecutor::builder()
         .program(executable)
         .debug_child(debug_child)
         .shmem_provider(&mut shmem_provider)
         .autotokens(&mut tokens)
         .parse_afl_cmdline(arguments)
         .coverage_map_size(MAP_SIZE)
+        .timeout(timeout)
+        .kill_signal(signal)
         .is_persistent(true)
         .build_dynamic_map(edges_observer, tuple_list!(time_observer))
         .unwrap();
-
-    let mut executor = TimeoutForkserverExecutor::with_signal(forkserver, timeout, signal)
-        .expect("Failed to create the executor.");
 
     // Read tokens
     if let Some(tokenfile) = tokenfile {
@@ -339,27 +341,23 @@ fn fuzz(
 
     if let Some(exec) = &cmplog_exec {
         // The cmplog map shared between observer and executor
-        let mut cmplog_shmem = shmem_provider
-            .new_shmem(core::mem::size_of::<AFLppCmpMap>())
-            .unwrap();
+        let mut cmplog_shmem = shmem_provider.uninit_on_shmem::<AFLppCmpLogMap>().unwrap();
         // let the forkserver know the shmid
         cmplog_shmem.write_to_env("__AFL_CMPLOG_SHM_ID").unwrap();
-        let cmpmap = unsafe { cmplog_shmem.as_object_mut::<AFLppCmpMap>() };
+        let cmpmap = unsafe { OwnedRefMut::<AFLppCmpLogMap>::from_shmem(&mut cmplog_shmem) };
 
-        let cmplog_observer = StdCmpObserver::new("cmplog", cmpmap, true);
+        let cmplog_observer = StdCmpValuesObserver::new("cmplog", cmpmap, true);
 
-        let cmplog_forkserver = ForkserverExecutor::builder()
+        let cmplog_executor = ForkserverExecutor::builder()
             .program(exec)
             .debug_child(debug_child)
             .shmem_provider(&mut shmem_provider)
             .parse_afl_cmdline(arguments)
             .is_persistent(true)
+            .timeout(timeout * 10)
+            .kill_signal(signal)
             .build(tuple_list!(cmplog_observer))
             .unwrap();
-
-        let cmplog_executor =
-            TimeoutForkserverExecutor::with_signal(cmplog_forkserver, timeout * 10, signal)
-                .expect("Failed to create the executor.");
 
         let tracing = TracingStage::new(cmplog_executor);
 

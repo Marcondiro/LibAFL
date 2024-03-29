@@ -1,11 +1,29 @@
-//! [`LLVM` `8-bi-counters`](https://clang.llvm.org/docs/SanitizerCoverage.html#tracing-pcs-with-guards) runtime for `LibAFL`.
+//! [`LLVM` `8-bit-counters`](https://clang.llvm.org/docs/SanitizerCoverage.html#tracing-pcs-with-guards) runtime for `LibAFL`.
 use alloc::vec::Vec;
+use core::ptr::addr_of_mut;
 
-use libafl::bolts::ownedref::OwnedMutSlice;
+use libafl_bolts::{ownedref::OwnedMutSlice, AsMutSlice, AsSlice};
 
 /// A [`Vec`] of `8-bit-counters` maps for multiple modules.
 /// They are initialized by calling [`__sanitizer_cov_8bit_counters_init`](
 pub static mut COUNTERS_MAPS: Vec<OwnedMutSlice<'static, u8>> = Vec::new();
+
+/// Create more copies of the counters maps
+///
+/// # Safety
+/// You are responsible for ensuring there is no multi-mutability!
+#[must_use]
+pub unsafe fn extra_counters() -> Vec<OwnedMutSlice<'static, u8>> {
+    COUNTERS_MAPS
+        .iter()
+        .map(|counters| {
+            OwnedMutSlice::from_raw_parts_mut(
+                counters.as_slice().as_ptr().cast_mut(),
+                counters.as_slice().len(),
+            )
+        })
+        .collect()
+}
 
 /// Initialize the sancov `8-bit-counters` - usually called by `llvm`.
 #[no_mangle]
@@ -13,6 +31,22 @@ pub static mut COUNTERS_MAPS: Vec<OwnedMutSlice<'static, u8>> = Vec::new();
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub extern "C" fn __sanitizer_cov_8bit_counters_init(start: *mut u8, stop: *mut u8) {
     unsafe {
+        for existing in &mut *addr_of_mut!(COUNTERS_MAPS) {
+            let range = existing.as_mut_slice().as_mut_ptr()
+                ..=existing
+                    .as_mut_slice()
+                    .as_mut_ptr()
+                    .add(existing.as_slice().len());
+            if range.contains(&start) || range.contains(&stop) {
+                // we have overlapping or touching ranges; merge them
+                let &start = range.start().min(&start);
+                let &stop = range.end().max(&stop);
+                *existing =
+                    OwnedMutSlice::from_raw_parts_mut(start, stop.offset_from(start) as usize);
+                return;
+            }
+        }
+        // we didn't overlap; keep going
         COUNTERS_MAPS.push(OwnedMutSlice::from_raw_parts_mut(
             start,
             stop.offset_from(start) as usize,
@@ -33,30 +67,31 @@ mod observers {
         fmt::Debug,
         hash::{BuildHasher, Hasher},
         iter::Flatten,
+        ptr::{addr_of, addr_of_mut},
         slice::{from_raw_parts, Iter, IterMut},
     };
 
     use ahash::RandomState;
-    use intervaltree::IntervalTree;
     use libafl::{
-        bolts::{
-            ownedref::OwnedMutSlice, tuples::Named, AsIter, AsIterMut, AsMutSlice, AsSlice, HasLen,
-        },
         inputs::UsesInput,
         observers::{DifferentialObserver, MapObserver, Observer, ObserversTuple},
         Error,
     };
+    use libafl_bolts::{
+        ownedref::OwnedMutSlice, AsIter, AsIterMut, AsMutSlice, AsSlice, HasLen, Named,
+    };
+    use meminterval::IntervalTree;
     use serde::{Deserialize, Serialize};
 
     use super::COUNTERS_MAPS;
 
     #[must_use]
     #[export_name = "counters_maps_observer"]
-    /// Create a new [`CountersMultiMapObserver`] of the [`COUNTERS_MAP`].
+    /// Create a new [`CountersMultiMapObserver`] of the [`COUNTERS_MAPS`].
     ///
-    /// This is a special [`MultiMapObserver`] for the [`COUNTERS_MAP`] and may be used when
+    /// This is a special [`libafl::observers::MultiMapObserver`] for the [`COUNTERS_MAPS`] and may be used when
     /// 8-bit counters are used for `SanitizerCoverage`. You can utilize this observer in a
-    /// [`HitcountsIterableMapObserver`] like so:
+    /// [`libafl::observers::HitcountsIterableMapObserver`] like so:
     ///
     /// ```rust,ignore
     /// use libafl::{
@@ -129,18 +164,18 @@ mod observers {
 
         #[inline]
         fn get(&self, idx: usize) -> &u8 {
-            let elem = self.intervals.query_point(idx).next().unwrap();
+            let elem = self.intervals.query(idx..=idx).next().unwrap();
             let i = elem.value;
-            let j = idx - elem.range.start;
-            unsafe { &COUNTERS_MAPS[i].as_slice()[j] }
+            let j = idx - elem.interval.start;
+            unsafe { &(*addr_of!(COUNTERS_MAPS[*i])).as_slice()[j] }
         }
 
         #[inline]
         fn get_mut(&mut self, idx: usize) -> &mut u8 {
-            let elem = self.intervals.query_point(idx).next().unwrap();
+            let elem = self.intervals.query_mut(idx..=idx).next().unwrap();
             let i = elem.value;
-            let j = idx - elem.range.start;
-            unsafe { &mut COUNTERS_MAPS[i].as_mut_slice()[j] }
+            let j = idx - elem.interval.start;
+            unsafe { &mut (*addr_of_mut!(COUNTERS_MAPS[*i])).as_mut_slice()[j] }
         }
 
         #[inline]
@@ -151,7 +186,7 @@ mod observers {
         fn count_bytes(&self) -> u64 {
             let initial = self.initial();
             let mut res = 0;
-            for map in unsafe { &COUNTERS_MAPS } {
+            for map in unsafe { &*addr_of!(COUNTERS_MAPS) } {
                 for x in map.as_slice() {
                     if *x != initial {
                         res += 1;
@@ -163,9 +198,9 @@ mod observers {
 
         fn hash(&self) -> u64 {
             let mut hasher = RandomState::with_seeds(0, 0, 0, 0).build_hasher();
-            for map in unsafe { &COUNTERS_MAPS } {
+            for map in unsafe { &*addr_of!(COUNTERS_MAPS) } {
                 let slice = map.as_slice();
-                let ptr = slice.as_ptr() as *const u8;
+                let ptr = slice.as_ptr();
                 let map_size = slice.len() / core::mem::size_of::<u8>();
                 unsafe {
                     hasher.write(from_raw_parts(ptr, map_size));
@@ -176,7 +211,7 @@ mod observers {
 
         fn reset_map(&mut self) -> Result<(), Error> {
             let initial = self.initial();
-            for map in unsafe { &mut COUNTERS_MAPS } {
+            for map in unsafe { &mut *addr_of_mut!(COUNTERS_MAPS) } {
                 for x in map.as_mut_slice() {
                     *x = initial;
                 }
@@ -216,15 +251,14 @@ mod observers {
         #[must_use]
         fn maybe_differential(name: &'static str) -> Self {
             let mut idx = 0;
-            let mut builder = vec![];
-            for (v, x) in unsafe { &COUNTERS_MAPS }.iter().enumerate() {
+            let mut intervals = IntervalTree::new();
+            for (v, x) in unsafe { &*addr_of!(COUNTERS_MAPS) }.iter().enumerate() {
                 let l = x.as_slice().len();
-                let r = (idx..(idx + l), v);
+                intervals.insert(idx..(idx + l), v);
                 idx += l;
-                builder.push(r);
             }
             Self {
-                intervals: builder.into_iter().collect::<IntervalTree<usize, usize>>(),
+                intervals,
                 len: idx,
                 name: name.to_string(),
                 initial: u8::default(),
@@ -253,16 +287,17 @@ mod observers {
         pub fn owned(name: &'static str) -> Self {
             let mut idx = 0;
             let mut v = 0;
-            let mut builder = vec![];
-            unsafe { &mut COUNTERS_MAPS }.iter_mut().for_each(|m| {
-                let l = m.as_mut_slice().len();
-                let r = (idx..(idx + l), v);
-                idx += l;
-                builder.push(r);
-                v += 1;
-            });
+            let mut intervals = IntervalTree::new();
+            unsafe { &mut *addr_of_mut!(COUNTERS_MAPS) }
+                .iter_mut()
+                .for_each(|m| {
+                    let l = m.as_mut_slice().len();
+                    intervals.insert(idx..(idx + l), v);
+                    idx += l;
+                    v += 1;
+                });
             Self {
-                intervals: builder.into_iter().collect::<IntervalTree<usize, usize>>(),
+                intervals,
                 len: idx,
                 name: name.to_string(),
                 initial: u8::default(),
@@ -294,7 +329,7 @@ mod observers {
         type IntoIter = Flatten<Iter<'it, OwnedMutSlice<'static, u8>>>;
 
         fn into_iter(self) -> Self::IntoIter {
-            unsafe { &COUNTERS_MAPS }.iter().flatten()
+            unsafe { &*addr_of!(COUNTERS_MAPS) }.iter().flatten()
         }
     }
 
@@ -305,7 +340,23 @@ mod observers {
         type IntoIter = Flatten<IterMut<'it, OwnedMutSlice<'static, u8>>>;
 
         fn into_iter(self) -> Self::IntoIter {
-            unsafe { &mut COUNTERS_MAPS }.iter_mut().flatten()
+            unsafe { &mut *addr_of_mut!(COUNTERS_MAPS) }
+                .iter_mut()
+                .flatten()
+        }
+    }
+
+    impl<const DIFFERENTIAL: bool> CountersMultiMapObserver<DIFFERENTIAL> {
+        /// Returns an iterator over the map.
+        #[must_use]
+        pub fn iter(&self) -> <&Self as IntoIterator>::IntoIter {
+            <&Self as IntoIterator>::into_iter(self)
+        }
+
+        /// Returns a mutable iterator over the map.
+        #[must_use]
+        pub fn iter_mut(&mut self) -> <&mut Self as IntoIterator>::IntoIter {
+            <&mut Self as IntoIterator>::into_iter(self)
         }
     }
 
