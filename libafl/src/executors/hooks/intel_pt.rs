@@ -144,10 +144,10 @@ where
             .as_mut()
             .unwrap()
             .decode_with_image(&mut image, Some(&mut buff));
-        //let s = serde_json::to_vec(&state).unwrap();
-        //dump_corpus(&s).unwrap();
-        //dump_trace_to_file(&buff).unwrap();
-        println!("IPs: {ips:x?}");
+        let s = serde_json::to_vec(&state).unwrap();
+        dump_corpus(&s).unwrap();
+        // dump_trace_to_file(&buff).unwrap();
+        // println!("IPs: {ips:x?}");
     }
 }
 
@@ -315,7 +315,7 @@ impl IntelPT {
             }
         };
 
-        println!("Intel PT: decoding {len} bytes");
+        // println!("Intel PT: decoding {len} bytes");
         if let Some(copy_buffer) = copy_buffer {
             copy_buffer.extend_from_slice(data);
         }
@@ -348,7 +348,7 @@ impl IntelPT {
             status = match decoder.sync_forward() {
                 Ok(s) => s,
                 Err(e) => {
-                    println!("pterror in sync {e:?}");
+                    // println!("pterror in sync {e:?}");
                     break;
                 }
             };
@@ -364,7 +364,7 @@ impl IntelPT {
                             status = s;
                         }
                         Err(e) => {
-                            println!("pterror in event {e:?}");
+                            // println!("pterror in event {e:?}");
                             break Err(e);
                         }
                     };
@@ -381,8 +381,8 @@ impl IntelPT {
                         // Even in case of errors, we may have succeeded in decoding some instructions.
                         // https://github.com/intel/libipt/blob/4a06fdffae39dadef91ae18247add91029ff43c0/ptxed/src/ptxed.c#L1954
                         // Using my fork that fixes this atm
-                        println!("pterror in packet next {e:?}");
-                        println!("err block ip: 0x{:x?}", b.ip());
+                        // println!("pterror in packet next {e:?}");
+                        // println!("err block ip: 0x{:x?}", b.ip());
                         ips.push(b.ip());
                         // status = Status::from_bits(e.code() as u32).unwrap();
                         break;
@@ -669,7 +669,7 @@ fn dump_trace_to_file(buff: &[u8]) -> Result<(), Error> {
 }
 
 fn dump_corpus(buff: &[u8]) -> Result<(), Error> {
-    let trace_path = unsafe { format!("./corpus/{FILE_NUM:06}.json") };
+    let trace_path = "./corpus.json";
     fs::create_dir_all(Path::new(&trace_path).parent().unwrap())?;
     let mut file = OpenOptions::new()
         .create(true)

@@ -12,26 +12,30 @@ use crate::{
     state::State,
 };
 
+#[derive(Debug, Default)]
+struct Bucket {
+    traces: Vec<Vec<u8>>,
+    avg_score: f64,
+}
+
 #[derive(Debug)]
 pub struct IntelPTFeedback {
     trace: Arc<Mutex<Vec<u8>>>,
-    past_traces: Vec<Vec<u8>>,
-    avg_score: u128,
+    past_traces_buckets: Vec<Bucket>,
 }
 
 impl IntelPTFeedback {
     pub fn new(trace: Arc<Mutex<Vec<u8>>>) -> Self {
         Self {
             trace,
-            past_traces: vec![],
-            avg_score: 0,
+            past_traces_buckets: vec![],
         }
     }
 }
 
 impl Named for IntelPTFeedback {
     fn name(&self) -> &Cow<'static, str> {
-        &Cow::Borrowed("IntelPTObserver")
+        &Cow::Borrowed("IntelPTFeedback")
     }
 }
 
@@ -41,7 +45,7 @@ where
 {
     fn is_interesting<EM, OT>(
         &mut self,
-        _state: &mut S,
+        state: &mut S,
         _manager: &mut EM,
         _input: &S::Input,
         _observers: &OT,
@@ -51,37 +55,45 @@ where
         EM: EventFirer<State = S>,
         OT: ObserversTuple<S>,
     {
-        if self.past_traces.is_empty() {
-            return Ok(true);
-        }
-
         let trace = self.trace.lock().unwrap();
+        if !self.past_traces_buckets.is_empty() {
+            for mut bucket in &mut self.past_traces_buckets {
+                let mut tot_score = 0;
+                let mut count = 0;
+                // limit the compared traces
+                let step = bucket.traces.len().div_ceil(200);
 
-        let mut tot_score = 0u128;
-        for pt in &self.past_traces {
-            let diff = capture_diff_slices(Algorithm::Myers, &trace, &pt);
-            let score = diff
-                .iter()
-                .map(|e| match e {
-                    DiffOp::Equal { .. } => 0,
-                    DiffOp::Delete { .. } => 0,
-                    DiffOp::Insert { new_len, .. } => *new_len,
-                    DiffOp::Replace { new_len, .. } => *new_len,
-                })
-                .sum::<usize>();
-            tot_score += score as u128;
+                for pt in bucket.traces.iter().step_by(step) {
+                    let diff = capture_diff_slices(Algorithm::Myers, &trace, &pt);
+                    let score = diff
+                        .iter()
+                        .map(|e| match e {
+                            DiffOp::Equal { .. } => 0,
+                            DiffOp::Delete { .. } => 0,
+                            DiffOp::Insert { new_len, .. } => *new_len,
+                            DiffOp::Replace { new_len, .. } => *new_len,
+                        })
+                        .sum::<usize>();
+                    tot_score += score;
+                    count += 1;
+                }
+                let weighted_score = tot_score as f64 / count as f64;
+
+                if bucket.avg_score == 0.0 || weighted_score < bucket.avg_score * 2.0 {
+                    bucket.traces.push(trace.clone());
+                    let n = bucket.traces.len() as f64;
+                    bucket.avg_score = (bucket.avg_score * (n - 1.0) + weighted_score) / n;
+                    return Ok(false);
+                }
+            }
         }
 
-        let weighted_score = tot_score / self.past_traces.len() as u128;
-
-        self.past_traces.push(trace.clone());
-        let n = self.past_traces.len() as u128;
-        self.avg_score = self.avg_score * (n - 1) / n + weighted_score / n;
-
-        if weighted_score > self.avg_score * 2 {
-            Ok(true)
-        } else {
-            Ok(false)
-        }
+        self.past_traces_buckets.push(Bucket {
+            traces: vec![trace.clone()],
+            avg_score: 0.0,
+        });
+        println!("number of buckets: {}", self.past_traces_buckets.len());
+        println!("{}", serde_json::to_string_pretty(&state).unwrap());
+        Ok(true)
     }
 }
