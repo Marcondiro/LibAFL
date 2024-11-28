@@ -48,6 +48,11 @@ where
     fn init<E: HasObservers>(&mut self, _state: &mut S) {}
 
     fn pre_exec(&mut self, _state: &mut S, _input: &S::Input) {
+        // this doesnt seem to reapply the file-based filters properly.
+        // looks like that instead of ptrace, I need to use another perf_event on mmpa/com_exec
+        // like perf_event_open({type=PERF_TYPE_SOFTWARE, size=0x88 /* PERF_ATTR_SIZE_??? */, config=PERF_COUNT_SW_DUMMY, sample_period=1, sample_type=PERF_SAMPLE_IP|PERF_SAMPLE_TID|PERF_SAMPLE_TIME|PERF_SAMPLE_CPU|PERF_SAMPLE_IDENTIFIER, read_format=PERF_FORMAT_ID|PERF_FORMAT_LOST, inherit=1, exclude_kernel=1, exclude_hv=1, mmap=1, comm=1, task=1, precise_ip=0 /* arbitrary skid */, sample_id_all=1, exclude_guest=1, mmap2=1, comm_exec=1, bpf_event=1, ...}, 3230730, 0, -1, PERF_FLAG_FD_CLOEXEC) = 30
+        self.intel_pt.reapply_filters().unwrap();
+
         self.intel_pt.enable_tracing().unwrap();
     }
 

@@ -16,4 +16,5 @@ libafl = { path = "../../../libafl/", default-features = false, features = [
   "intel_pt",
 ] }
 libafl_bolts = { path = "../../../libafl_bolts" }
+libafl_intelpt = { path = "../../../libafl_intelpt" }
 proc-maps = "0.4.0"

@@ -1,5 +1,5 @@
 use std::{
-    env, ffi::CString, num::NonZero, os::unix::ffi::OsStrExt, path::PathBuf, time::Duration,
+    env, ffi::CString, num::NonZero, os::unix::ffi::OsStrExt, path, path::PathBuf, time::Duration,
 };
 
 use libafl::{
@@ -20,7 +20,7 @@ use libafl::{
     state::StdState,
 };
 use libafl_bolts::{core_affinity, rands::StdRand, tuples::tuple_list};
-use libafl_intelpt::{IntelPT, PAGE_SIZE};
+use libafl_intelpt::{IPFilter, IntelPT, PAGE_SIZE};
 
 // Coverage map
 const MAP_SIZE: usize = 4096;
@@ -95,9 +95,9 @@ pub fn main() {
     // These information can be retrieved from `readelf -l` (for example)
     let code_memory_addresses = ELF_ET_DYN_BASE + 0x15000..=ELF_ET_DYN_BASE + 0x14000 + 0x41000;
 
-    intel_pt
-        .set_ip_filters(&[code_memory_addresses.clone()])
-        .unwrap();
+    // let filter = IPFilter::RunTimeAddr(code_memory_addresses.clone());
+    let filter = IPFilter::ObjectFileAddr(0x0..=usize::MAX, path::absolute(&target_path).unwrap());
+    intel_pt.set_ip_filters(&[filter]).unwrap();
 
     let sections = [Section {
         file_path: target_path.to_string_lossy().to_string(),

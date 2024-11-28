@@ -23,6 +23,7 @@ use libafl::{
     state::StdState,
 };
 use libafl_bolts::{current_nanos, rands::StdRand, tuples::tuple_list, AsSlice};
+use libafl_intelpt::IntelPT;
 use proc_maps::get_process_maps;
 
 // Coverage map
@@ -31,20 +32,24 @@ static mut MAP: [u8; MAP_SIZE] = [0; MAP_SIZE];
 #[allow(static_mut_refs)]
 static mut MAP_PTR: *mut u8 = unsafe { MAP.as_mut_ptr() };
 
+fn target_function(input: &BytesInput) {
+    let target = input.target_bytes();
+    let buf = target.as_slice();
+    if !buf.is_empty() && buf[0] == b'a' {
+        let _do_something = black_box(0);
+        if buf.len() > 1 && buf[1] == b'b' {
+            let _do_something = black_box(0);
+            if buf.len() > 2 && buf[2] == b'c' {
+                panic!("Artificial bug triggered =)");
+            }
+        }
+    }
+}
+
 pub fn main() {
     // The closure that we want to fuzz
     let mut harness = |input: &BytesInput| {
-        let target = input.target_bytes();
-        let buf = target.as_slice();
-        if !buf.is_empty() && buf[0] == b'a' {
-            let _do_something = black_box(0);
-            if buf.len() > 1 && buf[1] == b'b' {
-                let _do_something = black_box(0);
-                if buf.len() > 2 && buf[2] == b'c' {
-                    panic!("Artificial bug triggered =)");
-                }
-            }
-        }
+        target_function(input);
         ExitKind::Ok
     };
 
@@ -99,6 +104,7 @@ pub fn main() {
     let sections = process_maps
         .iter()
         .filter_map(|pm| {
+            println!("{:x?}", pm);
             if pm.is_exec() && pm.filename().is_some() {
                 Some(Section {
                     file_path: pm.filename().unwrap().to_string_lossy().to_string(),
@@ -112,9 +118,15 @@ pub fn main() {
         })
         .collect::<Vec<_>>();
 
+    let target_function_addr = target_function as *const () as usize;
+    println!("Address of the closure: {:#x}", target_function_addr);
+    let mut pt = IntelPT::builder().build().unwrap();
+    //pt.set_ip_filters(&[target_function_addr..=target_function_addr + 0x100000]).unwrap();
+
     // Intel PT hook that will handle the setup of Intel PT for each execution and fill the map
     let pt_hook = unsafe {
         IntelPTHook::builder()
+            .intel_pt(pt)
             .map_ptr(MAP_PTR)
             .map_len(MAP_SIZE)
             .image(&sections)

@@ -7,7 +7,7 @@ edition = "2021"
 [dependencies]
 env_logger = "0.11.5"
 libafl = { path = "../../../libafl", default-features = false, features = [
-  "intel_pt",
+  "intel_pt_export_raw",
 ] }
 libafl_bolts = { path = "../../../libafl_bolts" }
 libafl_intelpt = { path = "../../../libafl_intelpt" }

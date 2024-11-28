@@ -14,6 +14,7 @@ extern crate std;
 
 use std::{
     borrow::ToOwned,
+    fmt::{Display, Formatter},
     string::{String, ToString},
     vec::Vec,
 };
@@ -27,7 +28,7 @@ use std::{
         fd::{AsRawFd, FromRawFd, OwnedFd},
         raw::c_void,
     },
-    path::Path,
+    path::{Path, PathBuf},
     ptr, slice,
     sync::LazyLock,
 };
@@ -40,7 +41,7 @@ use bitbybit::bitfield;
 use caps::{CapSet, Capability};
 #[cfg(target_os = "linux")]
 use libafl_bolts::ownedref::OwnedRefMut;
-use libafl_bolts::Error;
+use libafl_bolts::{AsIter, Error};
 use libipt::PtError;
 #[cfg(target_os = "linux")]
 use libipt::{
@@ -116,6 +117,36 @@ pub enum KvmPTMode {
     HostGuest = 1,
 }
 
+#[derive(Debug, Clone)]
+pub enum IPFilter {
+    /// Raw filter specifying the runtime virtual addresses
+    ///
+    /// The user must take into account anything that could affect the runtime virtual addresses
+    /// (like relocation and ASLR). The provided addresses must match the addresses that the CPU
+    /// will use.
+    RunTimeAddr(RangeInclusive<usize>),
+    /// Filter specifying a code region in an object file
+    ///
+    /// The addresses specified correspond to the offsets in the file
+    ObjectFileAddr(RangeInclusive<usize>, PathBuf),
+}
+
+impl Display for IPFilter {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let (start, end, file) = match self {
+            IPFilter::RunTimeAddr(r) => (*r.start(), *r.end(), None),
+            IPFilter::ObjectFileAddr(r, p) => (*r.start(), *r.end(), Some(p)),
+        };
+        let size = end - start;
+        write!(f, "filter {start:#016x}/{size:#016x}")?;
+        if let Some(p) = file {
+            write!(f, "@{}", p.display())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Intel Processor Trace (PT)
 #[cfg(target_os = "linux")]
 #[derive(Debug)]
@@ -128,7 +159,7 @@ pub struct IntelPT {
     aux_head: *mut u64,
     aux_tail: *mut u64,
     previous_decode_head: u64,
-    ip_filters: Vec<RangeInclusive<usize>>,
+    ip_filters: Vec<IPFilter>,
     #[cfg(feature = "export_raw")]
     last_decode_trace: Vec<u8>,
 }
@@ -146,13 +177,46 @@ impl IntelPT {
     /// Set filters based on Instruction Pointer (IP)
     ///
     /// Only instructions in `filters` ranges will be traced.
-    pub fn set_ip_filters(&mut self, filters: &[RangeInclusive<usize>]) -> Result<(), Error> {
-        let str_filter = filters
-            .iter()
-            .map(|filter| {
-                let size = filter.end() - filter.start();
-                format!("filter {:#016x}/{:#016x} ", filter.start(), size)
-            })
+    pub fn set_ip_filters<'a, T>(&mut self, filters: T) -> Result<(), Error>
+    where
+        T: IntoIterator<Item = &'a IPFilter>,
+        T::IntoIter: Clone,
+    {
+        let filters_iter = filters.into_iter();
+        let str_filter = filters_iter
+            .clone()
+            .map(|filter| filter.to_string())
+            .reduce(|acc, s| acc + &s)
+            .unwrap_or_default();
+
+        // SAFETY: CString::from_vec_unchecked is safe because no null bytes are added to str_filter
+        let c_str_filter = unsafe { CString::from_vec_unchecked(str_filter.into_bytes()) };
+        println!("{c_str_filter:?}");
+        match unsafe { SET_FILTER(self.fd.as_raw_fd(), c_str_filter.into_raw()) } {
+            -1 => {
+                let availability = match availability() {
+                    Ok(()) => String::new(),
+                    Err(reasons) => format!(" Possible reasons: {reasons}"),
+                };
+                Err(Error::last_os_error(format!(
+                    "Failed to set IP filters.{availability}"
+                )))
+            }
+            0 => {
+                self.ip_filters = filters_iter.map(|f| f.clone()).collect();
+                Ok(())
+            }
+            ret => Err(Error::unsupported(format!(
+                "Failed to set IP filter, ioctl returned unexpected value {ret}"
+            ))),
+        }
+    }
+
+    pub fn reapply_filters(&mut self) -> Result<(), Error> {
+        let filters_iter = self.ip_filters.as_iter();
+        let str_filter = filters_iter
+            .clone()
+            .map(|filter| filter.to_string())
             .reduce(|acc, s| acc + &s)
             .unwrap_or_default();
 
@@ -169,7 +233,7 @@ impl IntelPT {
                 )))
             }
             0 => {
-                self.ip_filters = filters.to_vec();
+                self.ip_filters = filters_iter.map(|f| f.clone()).collect();
                 Ok(())
             }
             ret => Err(Error::unsupported(format!(
@@ -178,26 +242,26 @@ impl IntelPT {
         }
     }
 
-    fn ip_filters_to_addr_filter(&self) -> AddrFilter {
-        let mut builder = AddrFilterBuilder::new();
-        let mut iter = self
-            .ip_filters
-            .iter()
-            .map(|f| AddrRange::new(*f.start() as u64, *f.end() as u64, AddrConfig::FILTER));
-        if let Some(f) = iter.next() {
-            builder.addr0(f);
-            if let Some(f) = iter.next() {
-                builder.addr1(f);
-                if let Some(f) = iter.next() {
-                    builder.addr2(f);
-                    if let Some(f) = iter.next() {
-                        builder.addr3(f);
-                    }
-                }
-            }
-        }
-        builder.finish()
-    }
+    // fn ip_filters_to_addr_filter(&self) -> AddrFilter {
+    //     let mut builder = AddrFilterBuilder::new();
+    //     let mut iter = self
+    //         .ip_filters
+    //         .iter()
+    //         .map(|f| AddrRange::new(*f.start() as u64, *f.end() as u64, AddrConfig::FILTER));
+    //     if let Some(f) = iter.next() {
+    //         builder.addr0(f);
+    //         if let Some(f) = iter.next() {
+    //             builder.addr1(f);
+    //             if let Some(f) = iter.next() {
+    //                 builder.addr2(f);
+    //                 if let Some(f) = iter.next() {
+    //                     builder.addr3(f);
+    //                 }
+    //             }
+    //         }
+    //     }
+    //     builder.finish()
+    // }
 
     /// Start tracing
     ///
@@ -308,7 +372,7 @@ impl IntelPT {
         };
 
         let mut config = ConfigBuilder::new(data.as_mut()).map_err(error_from_pt_error)?;
-        config.filter(self.ip_filters_to_addr_filter());
+        //config.filter(self.ip_filters_to_addr_filter());
         if let Some(cpu) = &*CURRENT_CPU {
             config.cpu(*cpu);
         }
