@@ -108,7 +108,6 @@ pub struct ImageInfo {
     pub vdso: GuestAddr,
     pub entry: GuestAddr,
     pub brk: GuestAddr,
-    pub alignment: GuestAddr,
     pub exec_stack: bool,
 }
 
@@ -251,7 +250,6 @@ impl Qemu {
             vdso: image_info.vdso,
             entry: image_info.entry,
             brk: image_info.brk,
-            alignment: image_info.alignment,
             exec_stack: image_info.exec_stack,
         }
     }
@@ -469,16 +467,23 @@ impl Qemu {
 pub mod pybind {
     use libafl_qemu_sys::{GuestAddr, MmapPerms};
     use pyo3::{
-        Bound, PyObject, PyResult, Python,
-        conversion::FromPyObject,
+        Bound, FromPyObject, PyObject, PyResult, Python,
         exceptions::PyValueError,
-        pymethods,
+        pyclass, pymethods,
         types::{PyAnyMethods, PyInt},
     };
 
-    use crate::{pybind::Qemu, qemu::hooks::SyscallHookResult};
+    use crate::{pybind::Qemu, qemu::hooks};
 
     static mut PY_SYSCALL_HOOK: Option<PyObject> = None;
+
+    #[pyclass]
+    #[derive(FromPyObject)]
+    pub struct SyscallHookResult {
+        /// if None: run.
+        /// else: skip with given value.
+        skip: Option<GuestAddr>,
+    }
 
     extern "C" fn py_syscall_hook_wrapper(
         _data: u64,
@@ -491,25 +496,31 @@ pub mod pybind {
         a5: u64,
         a6: u64,
         a7: u64,
-    ) -> SyscallHookResult {
+    ) -> hooks::SyscallHookResult {
         unsafe { (&raw const PY_SYSCALL_HOOK).read() }.map_or_else(
-            || SyscallHookResult::new(None),
+            || hooks::SyscallHookResult::Run,
             |obj| {
                 let args = (sys_num, a0, a1, a2, a3, a4, a5, a6, a7);
                 Python::with_gil(|py| {
                     let ret = obj.call1(py, args).expect("Error in the syscall hook");
                     let any = ret.bind(py);
                     if any.is_none() {
-                        SyscallHookResult::new(None)
+                        hooks::SyscallHookResult::Run
                     } else {
                         let a: Result<&Bound<'_, PyInt>, _> = any.downcast_exact();
                         if let Ok(i) = a {
-                            SyscallHookResult::new(Some(
+                            hooks::SyscallHookResult::Skip(
                                 i.extract().expect("Invalid syscall hook return value"),
-                            ))
+                            )
                         } else {
-                            SyscallHookResult::extract_bound(ret.bind(py))
-                                .expect("The syscall hook must return a SyscallHookResult")
+                            let syscall = SyscallHookResult::extract_bound(ret.bind(py))
+                                .expect("The syscall hook must return a SyscallHookResult");
+
+                            if let Some(ret) = syscall.skip {
+                                hooks::SyscallHookResult::Skip(ret)
+                            } else {
+                                hooks::SyscallHookResult::Run
+                            }
                         }
                     }
                 })
