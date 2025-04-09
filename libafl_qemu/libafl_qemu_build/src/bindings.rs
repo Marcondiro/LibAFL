@@ -84,6 +84,7 @@ const WRAPPER_HEADER: &str = r#"
 #include "qemu/plugin-memory.h"
 
 #include "libafl/cpu.h"
+#include "libafl/dirtylog.h"
 #include "libafl/gdb.h"
 #include "libafl/exit.h"
 #include "libafl/jit.h"
@@ -155,6 +156,7 @@ pub fn generate(
         .allowlist_type("Syx.*")
         .allowlist_type("libafl_mapinfo")
         .allowlist_type("IntervalTreeRoot")
+        .allowlist_type("Error")
         .allowlist_function("qemu_system_debug_request")
         .allowlist_function("target_mmap")
         .allowlist_function("target_mprotect")
@@ -179,6 +181,9 @@ pub fn generate(
         .allowlist_function("vm_start")
         .allowlist_function("qemu_main_loop")
         .allowlist_function("qemu_cleanup")
+        .allowlist_function("loadvm_for_hotreload")
+        .allowlist_function("hotreload")
+        .allowlist_function("migrate_set_capability_mapped_ram")
         .blocklist_function("main_loop_wait") // bindgen issue #1313
         .blocklist_type("siginfo_t")
         .raw_line("use libc::siginfo_t;")

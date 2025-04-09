@@ -13,8 +13,26 @@ use typed_builder::TypedBuilder;
 #[derive(Debug, strum_macros::Display, Clone)]
 #[strum(prefix = "-accel ", serialize_all = "lowercase")]
 pub enum Accelerator {
-    Kvm,
+    #[strum(to_string = "kvm{0}")]
+    Kvm(KvmProperties),
     Tcg,
+}
+
+#[cfg(feature = "systemmode")]
+#[derive(Debug, Clone, Default, TypedBuilder)]
+pub struct KvmProperties {
+    #[builder(default, setter(strip_option))]
+    dirty_ring_size: Option<usize>,
+}
+
+#[cfg(feature = "systemmode")]
+impl Display for KvmProperties {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        if let Some(s) = self.dirty_ring_size {
+            write!(f, ",dirty-ring-size={s}")?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, strum_macros::Display, Clone)]

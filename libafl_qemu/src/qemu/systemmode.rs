@@ -8,9 +8,10 @@ use std::{
 
 use bytes_utils::SegmentedBuf;
 use libafl_qemu_sys::{
-    GuestAddr, GuestPhysAddr, GuestUsize, GuestVirtAddr, libafl_load_qemu_snapshot,
-    libafl_page_from_addr, libafl_qemu_current_paging_id, libafl_save_qemu_snapshot, qemu_cleanup,
-    qemu_main_loop, vm_start,
+    GuestAddr, GuestPhysAddr, GuestUsize, GuestVirtAddr, hotreload, libafl_load_qemu_snapshot,
+    libafl_page_from_addr, libafl_qemu_current_paging_id, libafl_save_qemu_snapshot,
+    loadvm_for_hotreload, migrate_set_capability_mapped_ram, qemu_cleanup, qemu_main_loop,
+    vm_start,
 };
 use libc::EXIT_SUCCESS;
 use num_traits::Zero;
@@ -234,6 +235,21 @@ impl Qemu {
     pub fn load_snapshot(&self, name: &str, sync: bool) {
         let s = CString::new(name).expect("Invalid snapshot name");
         unsafe { libafl_load_qemu_snapshot(s.as_ptr().cast_mut(), sync) };
+    }
+
+    pub fn load_snapshot_for_hotreload(&self, name: &str) {
+        let s = CString::new(name).expect("Invalid snapshot name");
+        let mut errp: *mut libafl_qemu_sys::Error = null_mut();
+        unsafe { loadvm_for_hotreload(&raw mut errp, s.as_ptr().cast_mut()) };
+    }
+
+    pub fn hotreload(&self) {
+        let mut errp: *mut libafl_qemu_sys::Error = null_mut();
+        unsafe { hotreload(&raw mut errp) };
+    }
+
+    pub fn migrate_set_capability_mapped_ram(&self, mapped_ram: bool) {
+        unsafe { migrate_set_capability_mapped_ram(mapped_ram) };
     }
 
     #[must_use]
