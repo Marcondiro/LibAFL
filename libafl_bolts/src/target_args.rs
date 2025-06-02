@@ -11,7 +11,7 @@ use crate::fs::{InputFile, get_unique_std_input_file};
 /// How to deliver input to an external program
 /// `StdIn`: The target reads from stdin
 /// `File`: The target reads from the specified [`InputFile`]
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputLocation {
     /// Mutate a commandline argument to deliver an input
     Arg {
@@ -19,8 +19,10 @@ pub enum InputLocation {
         argnum: usize,
     },
     /// Deliver input via `StdIn`
-    #[default]
-    StdIn,
+    StdIn {
+        /// The alternative input file
+        input_file: Option<InputFile>,
+    },
     /// Deliver the input via the specified [`InputFile`]
     /// You can use specify [`InputFile::create(INPUTFILE_STD)`] to use a default filename.
     File {
@@ -29,27 +31,32 @@ pub enum InputLocation {
     },
 }
 
+impl Default for InputLocation {
+    fn default() -> Self {
+        Self::StdIn { input_file: None }
+    }
+}
+
+/// The shared inner structs of trait [`StdTargetArgs`]
+#[derive(Debug, Clone, Default)]
+pub struct StdTargetArgsInner {
+    /// Program arguments
+    pub arguments: Vec<OsString>,
+    /// Program main program
+    pub program: Option<OsString>,
+    /// Input location, might be stdin or file or cli arg
+    pub input_location: InputLocation,
+    /// Program environments
+    pub envs: Vec<(OsString, OsString)>,
+}
+
 /// The main implementation trait of afl style arguments handling
-pub trait TargetArgs: Sized {
-    /// Gets the arguments
-    fn arguments_ref(&self) -> &Vec<OsString>;
-    /// Gets the mutable arguments
-    fn arguments_mut(&mut self) -> &mut Vec<OsString>;
+pub trait StdTargetArgs: Sized {
+    /// Get inner common arguments
+    fn inner(&self) -> &StdTargetArgsInner;
 
-    /// Gets the main program
-    fn program_ref(&self) -> &Option<OsString>;
-    /// Gets the mutable main program
-    fn program_mut(&mut self) -> &mut Option<OsString>;
-
-    /// Gets the input file
-    fn input_location_ref(&self) -> &InputLocation;
-    /// Gets the mutable input file
-    fn input_location_mut(&mut self) -> &mut InputLocation;
-
-    /// Get the environments
-    fn envs_ref(&self) -> &Vec<(OsString, OsString)>;
-    /// Get the mutable environments
-    fn envs_mut(&mut self) -> &mut Vec<(OsString, OsString)>;
+    /// Get mutable inner common arguments
+    fn inner_mut(&mut self) -> &mut StdTargetArgsInner;
 
     /// Adds an environmental var to the harness's commandline
     #[must_use]
@@ -58,7 +65,8 @@ pub trait TargetArgs: Sized {
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        self.envs_mut()
+        self.inner_mut()
+            .envs
             .push((key.as_ref().to_owned(), val.as_ref().to_owned()));
         self
     }
@@ -75,20 +83,23 @@ pub trait TargetArgs: Sized {
         for (ref key, ref val) in vars {
             res.push((key.as_ref().to_owned(), val.as_ref().to_owned()));
         }
-        self.envs_mut().append(&mut res);
+        self.inner_mut().envs.append(&mut res);
         self
     }
 
     /// If use stdin
     #[must_use]
     fn use_stdin(&self) -> bool {
-        matches!(self.input_location_ref(), InputLocation::StdIn)
+        matches!(
+            &self.inner().input_location,
+            InputLocation::StdIn { input_file: _ }
+        )
     }
 
     /// Set input
     #[must_use]
     fn input(mut self, input: InputLocation) -> Self {
-        *self.input_location_mut() = input;
+        self.inner_mut().input_location = input;
         self
     }
 
@@ -97,7 +108,7 @@ pub trait TargetArgs: Sized {
     /// Use [`Self::arg_input_file_std`] if you want to provide the input as a file instead.
     #[must_use]
     fn arg_input_arg(mut self) -> Self {
-        let argnum = self.arguments_ref().len();
+        let argnum = self.inner().arguments.len();
         self = self.input(InputLocation::Arg { argnum });
         // Placeholder arg that gets replaced with the input name later.
         self = self.arg("PLACEHOLDER");
@@ -112,9 +123,11 @@ pub trait TargetArgs: Sized {
     fn arg_input_file<P: AsRef<Path>>(self, path: P) -> Self {
         let mut moved = self.arg(path.as_ref());
         assert!(
-            match moved.input_location_ref() {
+            match &moved.inner().input_location {
                 InputLocation::File { out_file } => out_file.path.as_path() == path.as_ref(),
-                InputLocation::StdIn => true,
+                InputLocation::StdIn { input_file } => input_file
+                    .as_ref()
+                    .is_none_or(|of| of.path.as_path() == path.as_ref()),
                 InputLocation::Arg { argnum: _ } => false,
             },
             "Already specified an input file under a different name. This is not supported"
@@ -137,7 +150,7 @@ pub trait TargetArgs: Sized {
     where
         O: AsRef<OsStr>,
     {
-        *self.program_mut() = Some(program.as_ref().to_owned());
+        self.inner_mut().program = Some(program.as_ref().to_owned());
         self
     }
 
@@ -150,7 +163,7 @@ pub trait TargetArgs: Sized {
     where
         O: AsRef<OsStr>,
     {
-        self.arguments_mut().push(arg.as_ref().to_owned());
+        self.inner_mut().arguments.push(arg.as_ref().to_owned());
         self
     }
 
@@ -168,7 +181,7 @@ pub trait TargetArgs: Sized {
         for arg in args {
             res.push(arg.as_ref().to_owned());
         }
-        self.arguments_mut().append(&mut res);
+        self.inner_mut().arguments.append(&mut res);
         self
     }
 
@@ -189,7 +202,7 @@ pub trait TargetArgs: Sized {
         let mut moved = self;
 
         let mut use_arg_0_as_program = false;
-        if moved.program_ref().is_none() {
+        if moved.inner().program.is_none() {
             use_arg_0_as_program = true;
         }
 
@@ -200,7 +213,7 @@ pub trait TargetArgs: Sized {
                 // subsequent arguments as regular arguments
                 use_arg_0_as_program = false;
             } else if item.as_ref() == "@@" {
-                match moved.input_location_ref().clone() {
+                match moved.inner().input_location.clone() {
                     InputLocation::File { out_file } => {
                         // If the input file name has been modified, use this one
                         moved = moved.arg_input_file(&out_file.path);

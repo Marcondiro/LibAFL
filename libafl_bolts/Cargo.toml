@@ -12,7 +12,7 @@ readme = "./README.md"
 license = "MIT OR Apache-2.0"
 keywords = ["fuzzing", "testing", "security"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.87"
 categories = [
   "development-tools::testing",
   "emulators",
@@ -177,8 +177,8 @@ serial_test = { workspace = true, optional = true, default-features = false, fea
   "logging",
 ] }
 
-# optional stable simd, pin to a commit due to `u8x32` not released yet. Switch as long as next release is out!
-wide = { git = "https://github.com/Lokathor/wide", rev = "71b5df0b2620da753836fafce5f99076181a49fe", optional = true }
+# optional stable simd, pin to a commit due to `u8x32` not released yet. Switch to `wide` as long as next release is out!
+wide = { version = "0.7.33", optional = true, package = "libafl_wide" }
 rustversion = { workspace = true }
 
 # Document all features of this crate (for `cargo doc`)
@@ -217,7 +217,7 @@ windows-result = "0.3.0"
 windows = { workspace = true }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-mach = "0.3.2"
+mach2 = "0.4.2"
 
 #[profile.release]
 #lto = true
