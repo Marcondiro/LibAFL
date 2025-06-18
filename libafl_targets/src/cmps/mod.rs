@@ -45,23 +45,48 @@ pub const CMPLOG_KIND_RTN: u8 = 1;
 
 // EXTERNS, GLOBALS
 
-#[cfg(feature = "cmplog")]
-// void __libafl_targets_cmplog_instructions(uintptr_t k, uint8_t shape, uint64_t arg1, uint64_t arg2)
+#[cfg(any(
+    feature = "cmplog",
+    feature = "sancov_cmplog",
+    feature = "sancov_value_profile"
+))]
+// void __libafl_targets_cmplog_instructions(uintptr_t k, uint8_t size, uint64_t arg1, uint64_t arg2)
 unsafe extern "C" {
     /// Logs an instruction for feedback during fuzzing
-    pub fn __libafl_targets_cmplog_instructions(k: usize, shape: u8, arg1: u64, arg2: u64);
+    pub fn __libafl_targets_cmplog_instructions(k: usize, size: u8, arg1: u64, arg2: u64);
 
     /// Logs an AFL++ style instruction for feedback during fuzzing
-    pub fn __libafl_targets_cmplog_instructions_extended(k: usize, shape: u8, arg1: u64, arg2: u64);
+    pub fn __libafl_targets_cmplog_instructions_extended(k: usize, size: u8, arg1: u64, arg2: u64);
 
     /// Logs a routine for feedback during fuzzing
     pub fn __libafl_targets_cmplog_routines(k: usize, ptr1: *const u8, ptr2: *const u8);
+
+    /// Cmplog routines but with len specified.
+    pub fn __libafl_targets_cmplog_routines_len(
+        k: usize,
+        ptr1: *const u8,
+        ptr2: *const u8,
+        len: usize,
+    );
 
     /// Pointer to the `CmpLog` map
     pub static mut libafl_cmplog_map_ptr: *mut CmpLogMap;
 
     /// Pointer to the extended `CmpLog` map
     pub static mut libafl_cmplog_map_extended_ptr: *mut CmpLogMap;
+}
+
+#[cfg(feature = "cmplog_extended_instrumentation")]
+unsafe extern "C" {
+    /// Logs an AFL++ style routine for feedback during fuzzing
+    pub fn __libafl_targets_cmplog_routines_extended(k: usize, ptr1: *const u8, ptr2: *const u8);
+    /// Extended cmplog routines but with len specified.
+    pub fn __libafl_targets_cmplog_routines_extended_len(
+        k: usize,
+        ptr1: *const u8,
+        ptr2: *const u8,
+        len: usize,
+    );
 }
 
 #[cfg(feature = "cmplog_extended_instrumentation")]
@@ -80,7 +105,7 @@ pub use libafl_cmplog_enabled as CMPLOG_ENABLED;
 
 /// The header for `CmpLog` hits.
 #[repr(C)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct CmpLogHeader {
     hits: u16,
     shape: u8,
@@ -95,7 +120,7 @@ pub struct CmpLogHeader {
 /// two (left and right of comparison) u128 values, split into two u64 values. If the left and
 /// right values are smaller than u64, they can be sign or zero extended to 64 bits, as the actual
 /// comparison size is determined by the `hits` field of the associated `AflppCmpLogHeader`.
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Copy, Clone)]
 #[repr(C, packed)]
 pub struct AflppCmpLogOperands {
     v0: u64,
@@ -197,7 +222,7 @@ impl AflppCmpLogOperands {
 }
 
 /// The AFL++ `cmpfn_operands` struct
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Copy, Clone)]
 #[repr(C, packed)]
 /// Comparison function operands, like for strcmp/memcmp, represented as two byte arrays.
 pub struct AflppCmpLogFnOperands {
@@ -269,17 +294,17 @@ impl AflppCmpLogFnOperands {
 
 /// The operands logged during `CmpLog`.
 #[repr(C)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct CmpLogInstruction(u64, u64, u8);
 
 /// The routine arguments logged during `CmpLog`.
 #[repr(C)]
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Copy, Clone)]
 pub struct CmpLogRoutine([u8; CMPLOG_RTN_LEN], [u8; CMPLOG_RTN_LEN]);
 
 /// Union of cmplog operands and routines
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 pub union CmpLogVals {
     operands: [[CmpLogInstruction; CMPLOG_MAP_H]; CMPLOG_MAP_W],
     routines: [[CmpLogRoutine; CMPLOG_MAP_RTN_H]; CMPLOG_MAP_W],
@@ -291,7 +316,7 @@ impl Debug for CmpLogVals {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Copy, Clone)]
 #[repr(C, packed)]
 /// Comparison values
 pub union AflppCmpLogVals {
@@ -339,7 +364,7 @@ impl AflppCmpLogVals {
 
 /// A struct containing the `CmpLog` metadata for a `LibAFL` run.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Copy, Clone)]
 pub struct CmpLogMap {
     headers: [CmpLogHeader; CMPLOG_MAP_W],
     vals: CmpLogVals,
@@ -376,30 +401,32 @@ impl CmpMap for CmpLogMap {
 
     fn values_of(&self, idx: usize, execution: usize) -> Option<CmpValues> {
         if self.headers[idx].kind == CMPLOG_KIND_INS {
+            let shape = self.headers[idx].shape;
             unsafe {
-                match self.headers[idx].shape {
-                    1 => Some(CmpValues::U8((
+                match shape {
+                    0 => Some(CmpValues::U8((
                         self.vals.operands[idx][execution].0 as u8,
                         self.vals.operands[idx][execution].1 as u8,
                         self.vals.operands[idx][execution].2 == 1,
                     ))),
-                    2 => Some(CmpValues::U16((
+                    1 => Some(CmpValues::U16((
                         self.vals.operands[idx][execution].0 as u16,
                         self.vals.operands[idx][execution].1 as u16,
                         self.vals.operands[idx][execution].2 == 1,
                     ))),
-                    4 => Some(CmpValues::U32((
+                    3 => Some(CmpValues::U32((
                         self.vals.operands[idx][execution].0 as u32,
                         self.vals.operands[idx][execution].1 as u32,
                         self.vals.operands[idx][execution].2 == 1,
                     ))),
-                    8 => Some(CmpValues::U64((
+                    7 => Some(CmpValues::U64((
                         self.vals.operands[idx][execution].0,
                         self.vals.operands[idx][execution].1,
                         self.vals.operands[idx][execution].2 == 1,
                     ))),
-                    // other => panic!("Invalid CmpLog shape {}", other),
-                    _ => None,
+                    // TODO handle 128 bits & 256 bits & 512 bits cmps
+                    15 | 31 | 63 => None,
+                    _ => panic!("Invalid CmpLog shape {shape}"),
                 }
             }
         } else {
@@ -568,8 +595,9 @@ impl CmpMap for AflppCmpLogMap {
     fn values_of(&self, idx: usize, execution: usize) -> Option<CmpValues> {
         let header = self.headers[idx];
         if header.type_().value() == CMPLOG_KIND_INS {
+            let shape = self.headers[idx].shape().value();
             unsafe {
-                match self.headers[idx].shape().value() {
+                match shape {
                     0 => Some(CmpValues::U8((
                         self.vals.operands[idx][execution].v0 as u8,
                         self.vals.operands[idx][execution].v1 as u8,
@@ -590,9 +618,9 @@ impl CmpMap for AflppCmpLogMap {
                         self.vals.operands[idx][execution].v1,
                         false,
                     ))),
-                    // TODO handle 128 bits & 256 bits cmps
-                    // other => panic!("Invalid CmpLog shape {}", other),
-                    _ => None,
+                    // TODO handle 128 bits & 256 bits & 512 bits cmps
+                    15 | 31 | 63 => None,
+                    _ => panic!("Invalid CmpLog shape {shape}"),
                 }
             }
         } else {

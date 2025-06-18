@@ -26,13 +26,19 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 default = [
+  "asan_guest",
+  "asan_host",
   "usermode",
   "fork",
-  "build_libgasan",
-  "build_libqasan",
   "serdeany_autoreg",
   "injections",
 ]
+## Build asan for address sanitization
+asan_guest = []
+asan_host = []
+## Use Address Sanitizer implementation written in rust (rather than the older C version)
+asan_rust = []
+
 document-features = ["dep:document-features"]
 
 qemu_sanitizers = ["libafl_qemu_sys/qemu_sanitizers"]
@@ -49,11 +55,6 @@ injections = ["serde_yaml", "toml"]
 python = ["pyo3", "pyo3-build-config", "libafl_qemu_sys/python"]
 ## Fork support
 fork = ["libafl/fork"]
-## Build libqasan for address sanitization
-build_libgasan = []
-build_libqasan = []
-## Use Address Sanitizer implementation written in rust (rather than the older C version)
-rasan = []
 
 #! ## The following architecture features are mutually exclusive.
 
@@ -124,8 +125,8 @@ thread_local = "1.1.8"
 capstone = "0.13.0"
 rangemap = { workspace = true }
 log = { workspace = true }
-object = "0.36.4"
-addr2line = "0.24.1"
+object = "0.37.0"
+addr2line = "0.25.0"
 paste = { workspace = true }
 enum-map = "2.7.3"
 serde_yaml = { workspace = true, optional = true } # For parsing the injections yaml file

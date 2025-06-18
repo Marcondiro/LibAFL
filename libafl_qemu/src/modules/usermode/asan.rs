@@ -85,7 +85,7 @@ pub struct AsanModuleBuilder {
     target_crash: AsanTargetCrash,
 }
 
-#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy)]
+#[derive(IntoPrimitive, TryFromPrimitive, Debug, Copy, Clone)]
 #[repr(u64)]
 pub enum QasanAction {
     CheckLoad,
@@ -101,7 +101,7 @@ pub enum QasanAction {
     SwapState,
 }
 
-#[derive(IntoPrimitive, TryFromPrimitive, Debug, Clone, Copy, PartialEq)]
+#[derive(IntoPrimitive, TryFromPrimitive, Debug, Copy, Clone, PartialEq)]
 #[repr(i8)]
 pub enum PoisonKind {
     Valid = 0,
@@ -127,7 +127,7 @@ pub enum PoisonKind {
     HeapFreed = -3,     // 0xfd
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum AsanRollback {
     Ok,
     HasLeaks,
@@ -142,7 +142,7 @@ pub enum AsanError {
     Signal(i32),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone)]
 pub enum AsanTargetCrash {
     Never,
     OnFirstError,
@@ -991,9 +991,9 @@ where
                 .unwrap()
                 .parent()
                 .unwrap()
-                .join("libqasan.so");
+                .join("libafl_qemu_asan_host.so");
 
-            let asan_lib = env::var_os("CUSTOM_QASAN_PATH")
+            let asan_lib = env::var_os("CUSTOM_LIBAFL_QEMU_ASAN_PATH")
                 .map_or(asan_lib, |x| PathBuf::from(x.to_string_lossy().to_string()));
 
             assert!(

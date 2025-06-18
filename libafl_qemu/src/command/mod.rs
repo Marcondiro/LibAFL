@@ -29,10 +29,7 @@ use crate::{
     sync_exit::ExitArgs,
 };
 
-#[cfg(all(
-    any(cpu_target = "i386", cpu_target = "x86_64"),
-    feature = "systemmode"
-))]
+#[cfg(all(cpu_target = "x86_64", feature = "systemmode"))]
 pub mod nyx;
 pub mod parser;
 
@@ -117,7 +114,7 @@ macro_rules! define_std_command_manager {
                 }
             }
 
-            #[derive(Clone, Debug)]
+            #[derive(Debug, Clone)]
             pub enum [<$name Commands>]
             {
                 // StartPhysCommand(StartPhysCommand)
@@ -166,7 +163,7 @@ pub trait CommandManager<C, ED, ET, I, S, SM>: Sized + Debug {
     fn parse(&self, qemu: Qemu) -> Result<Self::Commands, CommandError>;
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct NopCommandManager;
 impl<C, ED, ET, I, S, SM> CommandManager<C, ED, ET, I, S, SM> for NopCommandManager {
     type Commands = NopCommand;
@@ -249,7 +246,7 @@ impl From<QemuRWError> for CommandError {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct NopCommand;
 
 impl Display for NopCommand {
