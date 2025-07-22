@@ -1,10 +1,7 @@
-use std::{
-    fmt::Debug,
-    ops::{Range, RangeInclusive},
-};
+use std::{fmt::Debug, ops::Range};
 
 use libafl::{HasMetadata, observers::ObserversTuple};
-pub use libafl_intelpt::SectionInfo;
+pub use libafl_intelpt::{AddrFilter, AddrFilterType, AddrFilters, SectionInfo};
 use libafl_intelpt::{Image, IntelPT, IntelPTBuilder};
 use libafl_qemu_sys::{CPUArchStatePtr, GuestAddr};
 use num_traits::SaturatingAdd;
@@ -37,6 +34,13 @@ impl IntelPTModule {
     }
 }
 
+impl<T> IntelPTModule<T> {
+    pub fn enable_tracing(&mut self) {
+        let pt = self.pt.as_mut().expect("Intel PT module not initialized.");
+        pt.enable_tracing().unwrap();
+    }
+}
+
 impl<I, S, T> EmulatorModule<I, S> for IntelPTModule<T>
 where
     I: Unpin,
@@ -65,8 +69,8 @@ where
     ) where
         ET: EmulatorModuleTuple<I, S>,
     {
-        let pt = self.pt.as_mut().expect("Intel PT module not initialized.");
-        pt.enable_tracing().unwrap();
+        let _pt = self.pt.as_mut().expect("Intel PT module not initialized.");
+        // pt.enable_tracing().unwrap();
     }
 
     fn post_exec<OT, ET>(
@@ -101,23 +105,12 @@ impl<T> AddressFilter for IntelPTModule<T>
 where
     T: Debug + 'static,
 {
-    fn register(&mut self, address_range: &Range<GuestAddr>) {
-        let pt = self.pt.as_mut().unwrap();
-        let mut filters = pt.ip_filters();
-        let range_inclusive =
-            RangeInclusive::new(address_range.start as usize, address_range.end as usize - 1);
-        filters.push(range_inclusive);
-        pt.set_ip_filters(&filters).unwrap()
+    fn register(&mut self, _address_range: &Range<GuestAddr>) {
+        todo!()
     }
 
-    fn allowed(&self, address: &GuestAddr) -> bool {
-        let pt = self.pt.as_ref().unwrap();
-        for f in pt.ip_filters() {
-            if f.contains(&(*address as usize)) {
-                return true;
-            }
-        }
-        false
+    fn allowed(&self, _address: &GuestAddr) -> bool {
+        todo!()
     }
 }
 
