@@ -25,6 +25,7 @@ impl<'a, T> Decoder<'a, T>
 where
     T: SaturatingAdd + From<u8> + Debug,
 {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         decoder_builder: EncoderDecoderBuilder<BlockDecoder<'static>>,
         exclude_hv: bool,
@@ -61,8 +62,8 @@ where
                 Ok(status) => {
                     self.status = status;
                     match self.decode_and_resync_loop() {
-                        Ok(_) if self.status.eos() => break 'sync,
-                        Ok(_) => (),
+                        Ok(()) if self.status.eos() => break 'sync,
+                        Ok(()) => (),
                         Err(e) => log::warn!("{e:?}"),
                     }
                 }
@@ -82,14 +83,13 @@ where
     fn decode_and_resync_loop(&mut self) -> Result<(), Error> {
         loop {
             match self.decode_blocks_loop() {
-                Ok(_) if self.status.eos() => return Ok(()),
-                Ok(_) => (),
-                Err(_) => (),
+                Ok(()) if self.status.eos() => return Ok(()),
+                Ok(()) | Err(_) => (),
             }
 
             match self.resync_loop() {
-                Ok(_) if self.status.eos() => return Ok(()),
-                Ok(_) => (),
+                Ok(()) if self.status.eos() => return Ok(()),
+                Ok(()) => (),
                 Err(e) => return Err(e),
             }
         }
@@ -107,7 +107,7 @@ where
                         return Ok(());
                     }
 
-                    // If exclude_hv is set, we continue resyncing if we are in root VMX operation
+                    // If exclude_hv is set and we are in root VMX operation, continue resyncing
                     if self.exclude_hv || matches!(self.vmx_non_root, Some(true)) {
                         return Ok(());
                     }
@@ -121,9 +121,6 @@ where
         }
     }
 
-    /// todo: remove this comment?
-    /// Returns true if exclude_hv option is set the decoding was stopped because of vm root
-    /// operations
     fn decode_blocks_loop(&mut self) -> Result<(), Error>
     where
         T: SaturatingAdd + From<u8> + Debug,
@@ -150,6 +147,11 @@ where
 
             while self.status.event_pending() {
                 self.handle_event()?;
+            }
+
+            // If exclude_hv is set and we are in root VMX operation, bail out
+            if self.exclude_hv && matches!(self.vmx_non_root, Some(false)) {
+                return Ok(());
             }
 
             match self.decoder.decode_next() {
@@ -188,12 +190,11 @@ where
         match self.decoder.event() {
             Ok((event, s)) => {
                 self.status = s;
-                // todo: write a test for this from a file?
                 match event.event_type() {
                     EventType::Paging(p) => self.vmx_non_root = Some(p.non_root()),
                     EventType::AsyncPaging(p) => self.vmx_non_root = Some(p.non_root()),
                     _ => (),
-                };
+                }
                 Ok(())
             }
             Err(e) => Err(Error::illegal_state(format!("PT error in event {e:?}"))),
