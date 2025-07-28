@@ -544,6 +544,8 @@ pub struct QemuConfig {
     #[cfg(feature = "systemmode")]
     #[builder(default, setter(strip_option, into))]
     initrd: Option<InitRD>,
+    #[builder(default, setter(strip_option, into))]
+    raw_options: Option<String>,
     #[cfg(feature = "usermode")]
     #[builder(setter(into))]
     program: Program,
