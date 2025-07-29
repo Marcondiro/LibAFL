@@ -1,13 +1,13 @@
-use crate::error_from_pt_error;
 use core::fmt::Debug;
+
 use libafl_bolts::{Error, hash_64_fast};
-use libipt::block::BlockDecoder;
-use libipt::enc_dec_builder::EncoderDecoderBuilder;
-use libipt::error::PtErrorCode;
-use libipt::event::EventType;
-use libipt::image::Image;
-use libipt::status::Status;
+use libipt::{
+    block::BlockDecoder, enc_dec_builder::EncoderDecoderBuilder, error::PtErrorCode,
+    event::EventType, image::Image, status::Status,
+};
 use num_traits::SaturatingAdd;
+
+use crate::error_from_pt_error;
 
 #[derive(Debug)]
 pub(crate) struct Decoder<'a, T> {

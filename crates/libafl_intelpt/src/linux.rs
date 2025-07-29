@@ -20,8 +20,6 @@ use std::{
     sync::LazyLock,
 };
 
-use super::{PAGE_SIZE, availability};
-use crate::decoder::Decoder;
 use arbitrary_int::u4;
 use bitbybit::bitfield;
 use caps::{CapSet, Capability};
@@ -45,6 +43,9 @@ use perf_event_open_sys::{
     perf_event_open,
 };
 use raw_cpuid::CpuId;
+
+use super::{PAGE_SIZE, availability};
+use crate::decoder::Decoder;
 
 const PT_EVENT_PATH: &str = "/sys/bus/event_source/devices/intel_pt";
 
